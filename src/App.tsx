@@ -302,24 +302,44 @@ export default function App() {
     const userRecords = records.filter(rec => rec.nip === nip);
     
     return userRecords.map(rec => {
-      let status = 'Hadir';
+      let status = 'Tepat Waktu';
       if (rec.type === 'Sakit') status = 'Sakit';
       else if (rec.type === 'Izin') status = 'Izin';
       else if (rec.type === 'Dinas') status = 'Dinas';
-      else if (rec.type === 'Absen Datang' || rec.type === 'Absen Pulang') {
-        const hour = rec.time ? parseInt(rec.time.split('.')[0]) : 0;
-        status = hour >= 7 ? 'Terlambat' : 'Hadir';
+      else if (rec.type === 'Absen Datang') {
+        const [limitHour, limitMinute] = (schoolSettings.entryLimit || "07:00").split(':').map(Number);
+        const timeParts = rec.time ? rec.time.split('.') : [];
+        const hour = timeParts[0] ? parseInt(timeParts[0]) : 0;
+        const minute = timeParts[1] ? parseInt(timeParts[1]) : 0;
+        if (hour > limitHour || (hour === limitHour && minute > limitMinute)) {
+          status = 'Terlambat';
+        } else {
+          status = 'Tepat Waktu';
+        }
+      } else if (rec.type === 'Absen Pulang') {
+        status = 'Pulang';
+      } else {
+        status = rec.type;
       }
       
       return {
         id: rec.id,
+        type: rec.type,
         date: rec.date,
         time: rec.time,
         status: status,
         location: 'Gerbang Utama (Sistem GPS)'
       };
     });
-  }, [records, nip]);
+  }, [records, nip, schoolSettings.entryLimit]);
+
+  const uniqueAttendanceDaysCount = useMemo(() => {
+    const presentRecords = teacherAttendanceHistory.filter(h => 
+      h.type === 'Absen Datang' || h.type === 'Absen Pulang' || h.type === 'Dinas'
+    );
+    const uniqueDates = new Set(presentRecords.map(h => h.date));
+    return uniqueDates.size;
+  }, [teacherAttendanceHistory]);
 
   const activeTeachersCount = useMemo(() => {
     const todayStrID = new Date().toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' });
@@ -565,6 +585,7 @@ export default function App() {
   const stopPromiseRef = useRef<Promise<any> | null>(null);
   const startTimeoutRef = useRef<any>(null);
   const scanTimeoutRef = useRef<any>(null);
+  const recentlyScannedRef = useRef<Record<string, number>>({});
   const scanInputRef = useRef<HTMLInputElement>(null);
   const fileInputGuruRef = useRef<HTMLInputElement>(null);
   const fileInputSiswaRef = useRef<HTMLInputElement>(null);
@@ -650,14 +671,14 @@ export default function App() {
     const passLower = password.trim().toLowerCase();
 
     const foundTeacher = teachers.find(t => {
-      // Ambil 6 digit terakhir NIP
-      const last6Nip = t.nip.slice(-6);
+      // Ambil 6 digit pertama NIP
+      const first6Nip = t.nip.slice(0, 6);
       
-      // Cek kecocokan username (bisa nama, NIP lengkap, atau 6 digit terakhir NIP)
-      const isUsernameMatch = t.nip === username || t.name.toLowerCase() === userLower || last6Nip === userLower;
+      // Cek kecocokan username (bisa nama, NIP lengkap, atau 6 digit pertama NIP)
+      const isUsernameMatch = t.nip === username || t.name.toLowerCase() === userLower || first6Nip === userLower;
       
-      // Cek kecocokan password (harus 6 digit terakhir NIP)
-      const isPasswordMatch = passLower === last6Nip;
+      // Cek kecocokan password (harus 6 digit pertama NIP)
+      const isPasswordMatch = passLower === first6Nip;
       
       return isUsernameMatch && isPasswordMatch;
     });
@@ -1383,6 +1404,15 @@ export default function App() {
     );
 
     if (found) {
+      // Prevent rapid double-scan within 5 seconds for the same student (camera read duplication)
+      const lastScanTime = recentlyScannedRef.current[found.nis] || 0;
+      const nowMs = Date.now();
+      if (nowMs - lastScanTime < 5000) {
+        // Silently return true to let the scanner proceed, without duplicating notification or database writes
+        return true;
+      }
+      recentlyScannedRef.current[found.nis] = nowMs;
+
       setScannedStudent(found);
       setScanSuccess(true);
 
@@ -2038,14 +2068,15 @@ export default function App() {
                           
                           const tableData = teacherAttendanceHistory.map(h => [
                             h.date,
-                            h.time,
+                            h.type || 'Absen',
+                            h.time || '-',
                             h.status,
                             h.location
                           ]);
                           
                           autoTable(doc, {
                             startY: 56,
-                            head: [['Tanggal', 'Jam Masuk', 'Status', 'Lokasi Absen']],
+                            head: [['Tanggal', 'Tipe Absen', 'Waktu Absen', 'Status', 'Lokasi Absen']],
                             body: tableData,
                             theme: 'grid',
                             headStyles: { fillColor: [168, 85, 247] },
@@ -2068,10 +2099,10 @@ export default function App() {
                       </button>
                       <button 
                         onClick={() => {
-                          const headers = ['Tanggal', 'Jam Masuk', 'Status', 'Lokasi Absen'];
+                          const headers = ['Tanggal', 'Tipe Absen', 'Waktu Absen', 'Status', 'Lokasi Absen'];
                           const csvContent = [
                             headers.join(','),
-                            ...teacherAttendanceHistory.map(h => `${h.date},${h.time},${h.status},${h.location}`)
+                            ...teacherAttendanceHistory.map(h => `"${h.date}","${h.type || 'Absen'}","${h.time || '-'}","${h.status}","${h.location}"`)
                           ].join('\n');
                           const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
                           const link = document.createElement('a');
@@ -2092,9 +2123,9 @@ export default function App() {
 
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-2xl p-5">
-                    <p className="text-emerald-400 text-sm mb-1">Hadir</p>
+                    <p className="text-emerald-400 text-sm mb-1">Hadir (Hari)</p>
                     <p className="text-2xl font-normal text-white">
-                      {teacherAttendanceHistory.filter(h => h.status === 'Hadir' || h.status === 'Terlambat').length}
+                      {uniqueAttendanceDaysCount}
                     </p>
                   </div>
                   <div className="bg-rose-500/10 border border-rose-500/20 rounded-2xl p-5">
@@ -2110,9 +2141,9 @@ export default function App() {
                     </p>
                   </div>
                   <div className="bg-blue-500/10 border border-blue-500/20 rounded-2xl p-5">
-                    <p className="text-blue-400 text-sm mb-1">Izin</p>
+                    <p className="text-blue-400 text-sm mb-1">Izin / Dinas</p>
                     <p className="text-2xl font-normal text-white">
-                      {teacherAttendanceHistory.filter(h => h.status === 'Izin').length}
+                      {teacherAttendanceHistory.filter(h => h.status === 'Izin' || h.status === 'Dinas').length}
                     </p>
                   </div>
                 </div>
@@ -2123,7 +2154,8 @@ export default function App() {
                       <thead>
                         <tr className="border-b border-white/10 bg-white/5">
                           <th className="py-4 px-6 text-xs font-normal text-gray-400 uppercase tracking-wider">Tanggal</th>
-                          <th className="py-4 px-6 text-xs font-normal text-gray-400 uppercase tracking-wider">Jam Masuk</th>
+                          <th className="py-4 px-6 text-xs font-normal text-gray-400 uppercase tracking-wider">Tipe Absen</th>
+                          <th className="py-4 px-6 text-xs font-normal text-gray-400 uppercase tracking-wider">Waktu Absen</th>
                           <th className="py-4 px-6 text-xs font-normal text-gray-400 uppercase tracking-wider">Status</th>
                           <th className="py-4 px-6 text-xs font-normal text-gray-400 uppercase tracking-wider">Lokasi Absen</th>
                         </tr>
@@ -2132,13 +2164,24 @@ export default function App() {
                         {teacherAttendanceHistory.map((history) => (
                           <tr key={history.id} className="hover:bg-white/[0.02] transition-colors">
                             <td className="py-4 px-6 text-white font-normal">{history.date}</td>
-                            <td className="py-4 px-6 text-gray-300 font-mono">{history.time}</td>
+                            <td className="py-4 px-6">
+                              <span className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-normal ${
+                                history.type === 'Absen Datang' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/10' :
+                                history.type === 'Absen Pulang' ? 'bg-rose-500/10 text-rose-400 border border-rose-500/10' :
+                                history.type === 'Dinas' ? 'bg-purple-500/10 text-purple-400 border border-purple-500/10' :
+                                'bg-amber-500/10 text-amber-400 border border-amber-500/10'
+                              }`}>
+                                {history.type || 'Absen'}
+                              </span>
+                            </td>
+                            <td className="py-4 px-6 text-gray-300 font-mono">{history.time || '-'}</td>
                             <td className="py-4 px-6">
                               <span className={`inline-flex items-center px-2.5 py-1 rounded-md text-xs font-normal ${
-                                history.status === 'Hadir' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 
+                                history.status === 'Tepat Waktu' || history.status === 'Hadir' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 
                                 history.status === 'Terlambat' ? 'bg-orange-500/10 text-orange-400 border border-orange-500/20' : 
                                 history.status === 'Sakit' ? 'bg-yellow-500/10 text-yellow-400 border border-yellow-500/20' :
                                 history.status === 'Izin' ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20' :
+                                history.status === 'Pulang' || history.status === 'Selesai' ? 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/20' :
                                 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
                               }`}>
                                 {history.status}
@@ -2713,6 +2756,12 @@ export default function App() {
 
                           <button
                             onClick={() => {
+                              const isAlreadyScanned = studentRecords.some(rec => rec.nis === s.nis);
+                              if (isAlreadyScanned) {
+                                playBeep('warning');
+                                showNotification(`${s.name} sudah melakukan presensi hari ini.`, 'text-amber-400');
+                                return;
+                              }
                               playBeep('success');
                               const now = new Date();
                               const recordTimeStr = now.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
