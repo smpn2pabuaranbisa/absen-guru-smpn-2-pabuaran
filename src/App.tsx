@@ -257,24 +257,34 @@ export default function App() {
   // Class Attendance states
   const [selectedClassAttendance, setSelectedClassAttendance] = useState('VII A');
   const [attendanceDate, setAttendanceDate] = useState('2026-06-27');
+  const [searchAttendanceSiswaQuery, setSearchAttendanceSiswaQuery] = useState('');
 
   const classStudents = useMemo(() => {
     const normalizeClass = (c: string) => (c || '').toLowerCase().replace(/[^a-z0-9]/g, '');
     const currentClassNormalized = normalizeClass(selectedClassAttendance);
     
     // Filter registered students belonging to this class
-    const registeredInClass = students.filter(s => normalizeClass(s.kelas) === currentClassNormalized);
+    let registeredInClass = students.filter(s => normalizeClass(s.kelas) === currentClassNormalized);
+    
+    // Apply search query if not empty
+    if (searchAttendanceSiswaQuery.trim()) {
+      const q = searchAttendanceSiswaQuery.toLowerCase().trim();
+      registeredInClass = registeredInClass.filter(s => 
+        s.name.toLowerCase().includes(q) || s.nis.includes(q)
+      );
+    }
     
     return registeredInClass.map(student => {
       const record = studentRecords.find(r => r.nis === student.nis);
       return {
         name: student.name,
         nis: student.nis,
+        kelas: student.kelas,
         status: record ? record.status : 'Alpa',
         time: record ? record.time : '-'
       };
     });
-  }, [students, studentRecords, selectedClassAttendance]);
+  }, [students, studentRecords, selectedClassAttendance, searchAttendanceSiswaQuery]);
 
   const currentClassAttendanceSummary = useMemo(() => {
     let present = 0;
@@ -395,7 +405,7 @@ export default function App() {
       student.nis,
       student.name,
       student.status,
-      student.status === 'Hadir' ? '07:15 AM' : '-'
+      student.status === 'Hadir' ? student.time : '-'
     ]);
 
     autoTable(doc, {
@@ -427,7 +437,7 @@ export default function App() {
         student.nis,
         `"${student.name}"`,
         student.status,
-        student.status === 'Hadir' ? '07:15 AM' : '-'
+        student.status === 'Hadir' ? student.time : '-'
       ];
       csvRows.push(row.join(','));
     });
@@ -697,6 +707,38 @@ export default function App() {
     } else {
       setLoginError('Username atau password salah. Silakan periksa kembali kredensial Anda.');
     }
+  };
+
+  const handleUpdateStudentStatus = (nis: string, studentName: string, studentKelas: string, newStatus: string) => {
+    const now = new Date();
+    const recordTimeStr = now.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+    // Find if record already exists
+    const existingIndex = studentRecords.findIndex(r => r.nis === nis);
+
+    if (existingIndex >= 0) {
+      const updatedRecords = [...studentRecords];
+      const updatedRec = {
+        ...updatedRecords[existingIndex],
+        status: newStatus,
+        time: newStatus === 'Hadir' ? recordTimeStr : '-'
+      };
+      updatedRecords[existingIndex] = updatedRec;
+      setStudentRecords(updatedRecords);
+      saveStudentRecordSync(updatedRec);
+    } else {
+      const newRec = {
+        id: Math.random().toString(36).substr(2, 9),
+        name: studentName,
+        nis: nis,
+        kelas: studentKelas,
+        time: newStatus === 'Hadir' ? recordTimeStr : '-',
+        status: newStatus
+      };
+      setStudentRecords(prev => [newRec, ...prev]);
+      saveStudentRecordSync(newRec);
+    }
+    showNotification(`Status kehadiran ${studentName} diubah menjadi ${newStatus}`, 'text-emerald-400');
   };
 
   // Beep Audio Feedback for scanning simulation
@@ -2276,6 +2318,8 @@ export default function App() {
                         <input 
                           type="text" 
                           placeholder="Cari siswa..." 
+                          value={searchAttendanceSiswaQuery}
+                          onChange={(e) => setSearchAttendanceSiswaQuery(e.target.value)}
                           className="bg-black/20 border border-white/5 rounded-lg pl-9 pr-4 py-2 text-sm text-white focus:outline-none focus:border-emerald-500/30 w-full sm:w-64"
                         />
                       </div>
@@ -2307,6 +2351,7 @@ export default function App() {
                           <th className="py-3 px-5 font-normal">Nama Siswa</th>
                           <th className="py-3 px-5 font-normal">Status</th>
                           <th className="py-3 px-5 font-normal">Waktu Absen</th>
+                          <th className="py-3 px-5 font-normal">Ubah Status (Aksi)</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -2325,7 +2370,55 @@ export default function App() {
                               </span>
                             </td>
                             <td className="py-3 px-5 text-gray-400 text-sm">
-                              {student.status === 'Hadir' ? '07:15 AM' : '-'}
+                              {student.status === 'Hadir' ? student.time : '-'}
+                            </td>
+                            <td className="py-3 px-5">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <button
+                                  onClick={() => handleUpdateStudentStatus(student.nis, student.name, student.kelas || '', 'Hadir')}
+                                  title="Set Hadir"
+                                  className={`px-2 py-1 rounded text-[10px] font-normal transition-all cursor-pointer ${
+                                    student.status === 'Hadir' 
+                                      ? 'bg-emerald-500 text-white font-medium shadow-[0_0_12px_rgba(16,185,129,0.3)]' 
+                                      : 'bg-white/5 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20'
+                                  }`}
+                                >
+                                  Hadir
+                                </button>
+                                <button
+                                  onClick={() => handleUpdateStudentStatus(student.nis, student.name, student.kelas || '', 'Sakit')}
+                                  title="Set Sakit"
+                                  className={`px-2 py-1 rounded text-[10px] font-normal transition-all cursor-pointer ${
+                                    student.status === 'Sakit' 
+                                      ? 'bg-yellow-500 text-black font-medium shadow-[0_0_12px_rgba(234,179,8,0.3)]' 
+                                      : 'bg-white/5 hover:bg-yellow-500/20 text-yellow-400 border border-yellow-500/20'
+                                  }`}
+                                >
+                                  Sakit
+                                </button>
+                                <button
+                                  onClick={() => handleUpdateStudentStatus(student.nis, student.name, student.kelas || '', 'Izin')}
+                                  title="Set Izin"
+                                  className={`px-2 py-1 rounded text-[10px] font-normal transition-all cursor-pointer ${
+                                    student.status === 'Izin' 
+                                      ? 'bg-blue-500 text-white font-medium shadow-[0_0_12px_rgba(59,130,246,0.3)]' 
+                                      : 'bg-white/5 hover:bg-blue-500/20 text-blue-400 border border-blue-500/20'
+                                  }`}
+                                >
+                                  Izin
+                                </button>
+                                <button
+                                  onClick={() => handleUpdateStudentStatus(student.nis, student.name, student.kelas || '', 'Alpa')}
+                                  title="Set Alpa"
+                                  className={`px-2 py-1 rounded text-[10px] font-normal transition-all cursor-pointer ${
+                                    student.status === 'Alpa' 
+                                      ? 'bg-rose-500 text-white font-medium shadow-[0_0_12px_rgba(244,63,94,0.3)]' 
+                                      : 'bg-white/5 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20'
+                                  }`}
+                                >
+                                  Alpa
+                                </button>
+                              </div>
                             </td>
                           </tr>
                         ))}
