@@ -133,7 +133,30 @@ export async function clearCollectionSync(collectionName: string): Promise<void>
   }
 }
 
-// 8. System Settings Sync
+// 9. Academic Calendar (Holidays) Sync
+export async function getHolidaysSync(): Promise<any[]> {
+  try {
+    const colRef = collection(db, 'holidays');
+    const snapshot = await getDocs(colRef);
+    const data: any[] = [];
+    snapshot.forEach((doc) => {
+      data.push(doc.data());
+    });
+    return data;
+  } catch (error) {
+    console.error('Error getting holidays:', error);
+    return [];
+  }
+}
+
+export async function saveHolidaySync(holiday: any): Promise<void> {
+  await setDoc(doc(db, 'holidays', holiday.id), holiday);
+}
+
+export async function deleteHolidaySync(id: string): Promise<void> {
+  await deleteDoc(doc(db, 'holidays', id));
+}
+
 export async function getSystemSettingsSync(defaultSettings: any): Promise<any> {
   try {
     const docRef = doc(db, 'systemSettings', 'school');

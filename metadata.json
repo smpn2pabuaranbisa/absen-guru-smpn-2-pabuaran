@@ -1,5 +1,5 @@
 {
-  "name": "Copy of Absensi Guru",
+  "name": "Absensi Guru",
   "description": "Aplikasi Absensi Guru dengan pencatatan waktu nyata",
   "requestFramePermissions": [
     "camera",

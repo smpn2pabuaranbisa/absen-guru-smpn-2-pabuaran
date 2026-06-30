@@ -5,11 +5,14 @@ import {
   CheckCircle2, Clock, User, Mail, Phone, MapPin, 
   LayoutDashboard, Bell, Search, Activity, Sparkles, Plus, Camera, X, Navigation,
   GraduationCap, ChevronDown, FileText, Coffee, Image as ImageIcon,
-  Lock, Shield, QrCode, Users, Check, Trash2, Edit, AlertCircle, XCircle, Upload, Calendar, Download, FileSpreadsheet, Settings, Building, Hash, FolderDown
+  Lock, Shield, QrCode, Users, Check, Trash2, Edit, AlertCircle, XCircle, Upload, Calendar, Download, FileSpreadsheet, Settings, Building, Hash, FolderDown,
+  Eye, EyeOff
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import JSZip from 'jszip';
+import { saveAs } from 'file-saver';
 import {
   getTeachersSync,
   saveTeacherSync,
@@ -30,7 +33,10 @@ import {
   saveAttendanceRecordSync,
   clearCollectionSync,
   getSystemSettingsSync,
-  saveSystemSettingsSync
+  saveSystemSettingsSync,
+  getHolidaysSync,
+  saveHolidaySync,
+  deleteHolidaySync
 } from './lib/firebaseSync';
 
 type AttendanceRecord = {
@@ -44,6 +50,7 @@ type AttendanceRecord = {
   iconName: string;
   nip?: string;
   nama?: string;
+  photo?: string | null;
 };
 
 const attendanceButtons = [
@@ -53,10 +60,25 @@ const attendanceButtons = [
   { id: 'izin', label: 'Izin / Sakit', icon: UserMinus, iconName: 'UserMinus', color: 'text-amber-400', bg: 'bg-amber-400/10', border: 'border-amber-400/30', shadow: 'hover:shadow-[0_0_30px_rgba(251,191,36,0.3)]', glow: 'shadow-[0_0_15px_rgba(251,191,36,0.4)]' },
 ];
 
+// Helper function to calculate distance using Haversine formula
+function getDistanceFromLatLonInM(lat1: number, lon1: number, lat2: number, lon2: number) {
+  const R = 6371; // Radius of the earth in km
+  const dLat = (lat2 - lat1) * (Math.PI / 180);
+  const dLon = (lon2 - lon1) * (Math.PI / 180);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) *
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  const d = R * c; // Distance in km
+  return d * 1000; // Distance in m
+}
+
 export default function App() {
   const [userRole, setUserRole] = useState<'guest' | 'guru' | 'siswa' | 'admin'>('guest');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [loginError, setLoginError] = useState('');
 
   // Directory lists (Guru & Staff)
@@ -65,6 +87,10 @@ export default function App() {
   const [students, setStudents] = useState<{name: string, nis: string, kelas: string, barcode: string}[]>([]);
 
   const [studentRecords, setStudentRecords] = useState<{id: string, name: string, nis: string, kelas: string, time: string, status: string}[]>([]);
+
+  const [holidays, setHolidays] = useState<{id: string, date: string, name: string}[]>([]);
+  const [newHolidayDate, setNewHolidayDate] = useState('');
+  const [newHolidayName, setNewHolidayName] = useState('');
 
   const [teachingSessionsToday, setTeachingSessionsToday] = useState<{id: string, name: string, nip: string, mapel: string, kelas: string, jam: string, status: string, timeStarted: string, timeEnded: string}[]>([]);
 
@@ -159,6 +185,7 @@ export default function App() {
   });
   const [modalState, setModalState] = useState<{ show: boolean; type: typeof attendanceButtons[0] | null }>({ show: false, type: null });
   const [location, setLocation] = useState<string>('Mencari lokasi...');
+  const [currentCoords, setCurrentCoords] = useState<{lat: number, lng: number} | null>(null);
   const [nama, setNama] = useState('');
   const [nip, setNip] = useState('');
   const [userJabatan, setUserJabatan] = useState('');
@@ -295,10 +322,23 @@ export default function App() {
   }, [records, nip]);
 
   const activeTeachersCount = useMemo(() => {
-    const todayStr = new Date().toLocaleDateString('en-CA');
-    const todayRecords = records.filter(r => r.date === todayStr && (r.type === 'Absen Datang' || r.type === 'Absen Pulang'));
+    const todayStrID = new Date().toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' });
+    const todayStrEN = new Date().toLocaleDateString('en-CA');
+    const todayRecords = records.filter(r => 
+      (r.date === todayStrID || r.date === todayStrEN) && 
+      (r.type === 'Absen Datang' || r.type === 'Absen Pulang')
+    );
     const uniqueNips = new Set(todayRecords.map(r => r.nip).filter(Boolean));
     return uniqueNips.size;
+  }, [records]);
+
+  const todayTeacherRecords = useMemo(() => {
+    const todayStrID = new Date().toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' });
+    const todayStrEN = new Date().toLocaleDateString('en-CA');
+    return records.filter(r => 
+      (r.date === todayStrID || r.date === todayStrEN) && 
+      (r.type === 'Absen Datang' || r.type === 'Absen Pulang')
+    );
   }, [records]);
 
   const getPlaceSignature = () => {
@@ -457,6 +497,56 @@ export default function App() {
     document.body.removeChild(link);
   };
 
+  const handleDownloadPhotos = async (monthYearStr: string) => { // format MM-YYYY
+    const zip = new JSZip();
+    const photoFolder = zip.folder(`Foto_Absensi_Guru_${monthYearStr}`);
+    
+    if (!photoFolder) {
+      showNotification('Gagal membuat folder ZIP.', 'text-rose-400');
+      return;
+    }
+
+    // records are AttendanceRecord
+    // Filter records by month
+    const filteredRecords = monthYearStr === 'all' 
+      ? records 
+      : records.filter(r => {
+        // Date format: DD MMM YYYY, we need to extract Month and Year
+        const [day, monthStr, year] = r.date.split(' ');
+        const monthMap: Record<string, string> = {
+          'Jan': '01', 'Feb': '02', 'Mar': '03', 'Apr': '04', 'Mei': '05', 'Jun': '06',
+          'Jul': '07', 'Ags': '08', 'Sep': '09', 'Okt': '10', 'Nov': '11', 'Des': '12'
+        };
+        const rMonthStr = `${monthMap[monthStr] || '01'}-${year}`;
+        return rMonthStr === monthYearStr;
+      });
+
+    const recordsWithPhotos = filteredRecords.filter(r => r.photo);
+
+    if (recordsWithPhotos.length === 0) {
+      showNotification('Tidak ada foto absensi pada periode ini.', 'text-amber-400');
+      return;
+    }
+
+    recordsWithPhotos.forEach((record, index) => {
+      // photo is base64: data:image/jpeg;base64,...
+      if (record.photo) {
+        const base64Data = record.photo.replace(/^data:image\/(png|jpeg|jpg);base64,/, "");
+        const safeName = (record.nama || 'TanpaNama').replace(/[^a-zA-Z0-9]/g, '_');
+        const filename = `${safeName}_${record.date.replace(/ /g, '_')}_${record.time.replace(/:/g, '')}_${index}.jpg`;
+        photoFolder.file(filename, base64Data, { base64: true });
+      }
+    });
+
+    try {
+      const content = await zip.generateAsync({ type: "blob" });
+      saveAs(content, `Foto_Absensi_Guru_${monthYearStr}.zip`);
+      showNotification('Foto absensi berhasil diunduh (ZIP)!', 'text-emerald-400');
+    } catch (error) {
+      showNotification('Gagal mengemas file ZIP.', 'text-rose-400');
+    }
+  };
+
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [stream, setStream] = useState<MediaStream | null>(null);
@@ -489,6 +579,7 @@ export default function App() {
   const [newStudentName, setNewStudentName] = useState('');
   const [newStudentNis, setNewStudentNis] = useState('');
   const [newStudentKelas, setNewStudentKelas] = useState('');
+  const [exportTeacherMonth, setExportTeacherMonth] = useState('06-2026');
   const [showAddTeacherModal, setShowAddTeacherModal] = useState(false);
   const [showAddStudentModal, setShowAddStudentModal] = useState(false);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
@@ -501,6 +592,9 @@ export default function App() {
   const [editingStudent, setEditingStudent] = useState<any>(null);
   const [showEditTeacherModal, setShowEditTeacherModal] = useState(false);
   const [showEditStudentModal, setShowEditStudentModal] = useState(false);
+  
+  const [showEditProfileModal, setShowEditProfileModal] = useState(false);
+  const [editingProfileData, setEditingProfileData] = useState<any>(null);
 
   // Load initial data from Firebase on mount
   useEffect(() => {
@@ -530,6 +624,11 @@ export default function App() {
           setRecords(loadedRecords);
         }
 
+        const loadedHolidays = await getHolidaysSync();
+        if (loadedHolidays) {
+          setHolidays(loadedHolidays);
+        }
+
         const loadedSettings = await getSystemSettingsSync(schoolSettings);
         if (loadedSettings) {
           setSchoolSettings(prev => ({ ...prev, ...loadedSettings }));
@@ -550,7 +649,19 @@ export default function App() {
     const userLower = username.trim().toLowerCase();
     const passLower = password.trim().toLowerCase();
 
-    const foundTeacher = teachers.find(t => t.nip === username || t.name.toLowerCase() === userLower);
+    const foundTeacher = teachers.find(t => {
+      // Ambil 6 digit terakhir NIP
+      const last6Nip = t.nip.slice(-6);
+      
+      // Cek kecocokan username (bisa nama, NIP lengkap, atau 6 digit terakhir NIP)
+      const isUsernameMatch = t.nip === username || t.name.toLowerCase() === userLower || last6Nip === userLower;
+      
+      // Cek kecocokan password (harus 6 digit terakhir NIP)
+      const isPasswordMatch = passLower === last6Nip;
+      
+      return isUsernameMatch && isPasswordMatch;
+    });
+
     if (userLower === 'admin' && passLower === 'admin') {
       setUserRole('admin');
       setActiveTab('analytics');
@@ -701,21 +812,68 @@ export default function App() {
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
         (position) => {
-          setLocation(`Lat: ${position.coords.latitude.toFixed(4)}, Long: ${position.coords.longitude.toFixed(4)}`);
+          const lat = position.coords.latitude;
+          const lng = position.coords.longitude;
+          setLocation(`Lat: ${lat.toFixed(4)}, Long: ${lng.toFixed(4)}`);
+          setCurrentCoords({lat, lng});
         },
         () => {
           setLocation('Lokasi tidak ditemukan');
+          setCurrentCoords(null);
         }
       );
     }
   };
 
   const openAttendanceModal = (btn: typeof attendanceButtons[0]) => {
+    const now = new Date();
+    const formattedDate = now.toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' });
+
+    if (btn.id === 'datang') {
+      const hasCheckedInToday = records.some(
+        r => r.nip === nip && r.date === formattedDate && r.type === 'Absen Datang'
+      );
+      if (hasCheckedInToday) {
+        showNotification('Gagal: Anda sudah melakukan Absen Datang hari ini.', 'text-rose-400');
+        return;
+      }
+    }
+
+    if (btn.id === 'pulang') {
+      const hasCheckedInToday = records.some(
+        r => r.nip === nip && r.date === formattedDate && r.type === 'Absen Datang'
+      );
+      if (!hasCheckedInToday) {
+        showNotification('Gagal: Anda belum melakukan Absen Datang hari ini. Silakan lakukan Absen Datang terlebih dahulu.', 'text-rose-400');
+        return;
+      }
+
+      const hasCheckedOutToday = records.some(
+        r => r.nip === nip && r.date === formattedDate && r.type === 'Absen Pulang'
+      );
+      if (hasCheckedOutToday) {
+        showNotification('Gagal: Anda sudah melakukan Absen Pulang hari ini.', 'text-rose-400');
+        return;
+      }
+
+      const [limitHour, limitMinute] = schoolSettings.exitLimit.split(':').map(Number);
+      if (!isNaN(limitHour) && !isNaN(limitMinute)) {
+        const currentHour = now.getHours();
+        const currentMinute = now.getMinutes();
+        if (currentHour < limitHour || (currentHour === limitHour && currentMinute < limitMinute)) {
+          showNotification(`Gagal: Belum waktunya absen pulang. Sesuai jam kerja, absen pulang dimulai pukul ${schoolSettings.exitLimit}.`, 'text-rose-400');
+          return;
+        }
+      }
+    }
+
     if (btn.id === 'datang' || btn.id === 'pulang' || btn.id === 'mengajar' || btn.id === 'izin') {
       setModalState({ show: true, type: btn });
       if (btn.id !== 'izin') {
         startCamera();
-        getLocation();
+        if (btn.id !== 'mengajar') {
+          getLocation();
+        }
       }
     } else {
       handleAttendance(btn);
@@ -726,6 +884,7 @@ export default function App() {
     setModalState({ show: false, type: null });
     stopCamera();
     setLocation('Mencari lokasi...');
+    setCurrentCoords(null);
     setPhoto(null);
     setIzinAlasan('');
     setIzinAttachment(null);
@@ -733,6 +892,45 @@ export default function App() {
 
   const confirmAttendance = () => {
     if (modalState.type) {
+      if (modalState.type.id === 'pulang') {
+        const now = new Date();
+        const [limitHour, limitMinute] = schoolSettings.exitLimit.split(':').map(Number);
+        if (!isNaN(limitHour) && !isNaN(limitMinute)) {
+          const currentHour = now.getHours();
+          const currentMinute = now.getMinutes();
+          if (currentHour < limitHour || (currentHour === limitHour && currentMinute < limitMinute)) {
+            showNotification(`Gagal: Belum waktunya absen pulang. Sesuai jam kerja, absen pulang dimulai pukul ${schoolSettings.exitLimit}.`, 'text-rose-400');
+            return;
+          }
+        }
+      }
+
+      if ((modalState.type.id === 'datang' || modalState.type.id === 'pulang')) {
+        if (!currentCoords) {
+          showNotification('Gagal: Menunggu lokasi atau akses lokasi ditolak. Aktifkan GPS / Izinkan akses lokasi browser Anda.', 'text-rose-400');
+          return;
+        }
+        
+        const targetLat = parseFloat(schoolSettings.latitude);
+        const targetLng = parseFloat(schoolSettings.longitude);
+
+        if (isNaN(targetLat) || isNaN(targetLng)) {
+          showNotification('Gagal: Koordinat sekolah tidak valid. Harap periksa Pengaturan Sistem.', 'text-rose-400');
+          return;
+        }
+
+        const distance = getDistanceFromLatLonInM(
+          currentCoords.lat, 
+          currentCoords.lng, 
+          targetLat, 
+          targetLng
+        );
+        
+        if (distance > schoolSettings.maxRadius) {
+          showNotification(`Gagal: Anda berada di luar radius sekolah (${Math.round(distance)} meter). Radius maksimal: ${schoolSettings.maxRadius} meter.`, 'text-rose-400');
+          return;
+        }
+      }
       handleAttendance(modalState.type);
       closeAttendanceModal();
     }
@@ -766,6 +964,15 @@ export default function App() {
   const handleAttendance = (btn: typeof attendanceButtons[0]) => {
     const now = new Date();
     
+    // Check for holidays
+    const todayStr = now.toISOString().split('T')[0];
+    const todayHoliday = holidays.find(h => h.date === todayStr);
+    
+    if (todayHoliday && btn.id !== 'izin') {
+      showNotification(`Hari ini adalah hari libur: ${todayHoliday.name}. Absensi reguler ditutup.`, 'text-amber-400');
+      return;
+    }
+    
     const formattedDate = now.toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' });
     const formattedTime = now.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
@@ -785,7 +992,8 @@ export default function App() {
       glow: btn.glow,
       iconName: btn.iconName,
       nip: nip || '',
-      nama: nama || ''
+      nama: nama || '',
+      photo: photo || null
     };
 
     setRecords((prev) => [newRecord, ...prev]);
@@ -1156,6 +1364,17 @@ export default function App() {
     const trimmed = inputVal.trim();
     if (!trimmed) return false;
 
+    const now = new Date();
+    // Check for holidays
+    const todayStr = now.toISOString().split('T')[0];
+    const todayHoliday = holidays.find(h => h.date === todayStr);
+    
+    if (todayHoliday) {
+      playBeep('error');
+      showNotification(`Hari ini adalah hari libur: ${todayHoliday.name}. Absensi ditutup.`, 'text-amber-400');
+      return false;
+    }
+
     // Find student by NIS, Barcode, or exact Name (case insensitive)
     const found = students.find(s => 
       s.nis === trimmed || 
@@ -1258,7 +1477,7 @@ export default function App() {
                     type="text"
                     value={username}
                     onChange={(e) => setUsername(e.target.value)}
-                    placeholder="Masukkan username (admin/guru)"
+                    placeholder="Masukkan username"
                     className="w-full pl-11 pr-4 py-3 bg-white/[0.03] border border-white/5 rounded-2xl text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/20 transition-all font-normal"
                     required
                   />
@@ -1270,13 +1489,20 @@ export default function App() {
                 <div className="relative">
                   <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-4.5 h-4.5 text-gray-500" />
                   <input
-                    type="password"
+                    type={showPassword ? "text" : "password"}
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     placeholder="••••••••"
-                    className="w-full pl-11 pr-4 py-3 bg-white/[0.03] border border-white/5 rounded-2xl text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/20 transition-all font-normal"
+                    className="w-full pl-11 pr-12 py-3 bg-white/[0.03] border border-white/5 rounded-2xl text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/20 transition-all font-normal"
                     required
                   />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300 transition-colors"
+                  >
+                    {showPassword ? <EyeOff className="w-4.5 h-4.5" /> : <Eye className="w-4.5 h-4.5" />}
+                  </button>
                 </div>
               </div>
 
@@ -1320,12 +1546,12 @@ export default function App() {
           </div>
         </div>
         
-        <nav className="flex-1 px-4 py-6 space-y-2">
+        <nav className="flex-1 px-4 py-6 space-y-1">
           {userRole === 'guru' && (
             <>
               <button
                 onClick={() => setActiveTab('dashboard')}
-                className={`w-full flex items-center gap-3 px-4 py-3.5 rounded-xl transition-all duration-300 cursor-pointer ${
+                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-300 cursor-pointer ${
                   activeTab === 'dashboard' 
                     ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20 shadow-[0_0_20px_rgba(59,130,246,0.1)]' 
                     : 'text-gray-400 hover:text-white hover:bg-white/5 border border-transparent'
@@ -1336,7 +1562,7 @@ export default function App() {
               </button>
               <button
                 onClick={() => setActiveTab('schedule')}
-                className={`w-full flex items-center gap-3 px-4 py-3.5 rounded-xl transition-all duration-300 cursor-pointer ${
+                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-300 cursor-pointer ${
                   activeTab === 'schedule' 
                     ? 'bg-orange-500/10 text-orange-400 border border-orange-500/20 shadow-[0_0_20px_rgba(249,115,22,0.1)]' 
                     : 'text-gray-400 hover:text-white hover:bg-white/5 border border-transparent'
@@ -1347,7 +1573,7 @@ export default function App() {
               </button>
               <button
                 onClick={() => setActiveTab('class-attendance')}
-                className={`w-full flex items-center gap-3 px-4 py-3.5 rounded-xl transition-all duration-300 cursor-pointer ${
+                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-300 cursor-pointer ${
                   activeTab === 'class-attendance' 
                     ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shadow-[0_0_20px_rgba(16,185,129,0.1)]' 
                     : 'text-gray-400 hover:text-white hover:bg-white/5 border border-transparent'
@@ -1358,7 +1584,7 @@ export default function App() {
               </button>
               <button
                 onClick={() => setActiveTab('teacher-attendance')}
-                className={`w-full flex items-center gap-3 px-4 py-3.5 rounded-xl transition-all duration-300 cursor-pointer ${
+                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-300 cursor-pointer ${
                   activeTab === 'teacher-attendance' 
                     ? 'bg-purple-500/10 text-purple-400 border border-purple-500/20 shadow-[0_0_20px_rgba(168,85,247,0.1)]' 
                     : 'text-gray-400 hover:text-white hover:bg-white/5 border border-transparent'
@@ -1369,7 +1595,7 @@ export default function App() {
               </button>
               <button
                 onClick={() => setActiveTab('scan')}
-                className={`w-full flex items-center gap-3 px-4 py-3.5 rounded-xl transition-all duration-300 cursor-pointer ${
+                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-300 cursor-pointer ${
                   activeTab === 'scan' 
                     ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20 shadow-[0_0_20px_rgba(59,130,246,0.1)]' 
                     : 'text-gray-400 hover:text-white hover:bg-white/5 border border-transparent'
@@ -1380,7 +1606,7 @@ export default function App() {
               </button>
               <button
                 onClick={() => setActiveTab('profile')}
-                className={`w-full flex items-center gap-3 px-4 py-3.5 rounded-xl transition-all duration-300 cursor-pointer ${
+                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-300 cursor-pointer ${
                   activeTab === 'profile' 
                     ? 'bg-purple-500/10 text-purple-400 border border-purple-500/20 shadow-[0_0_20px_rgba(168,85,247,0.1)]' 
                     : 'text-gray-400 hover:text-white hover:bg-white/5 border border-transparent'
@@ -1396,7 +1622,7 @@ export default function App() {
             <>
               <button
                 onClick={() => setActiveTab('scan')}
-                className={`w-full flex items-center gap-3 px-4 py-3.5 rounded-xl transition-all duration-300 cursor-pointer ${
+                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-300 cursor-pointer ${
                   activeTab === 'scan' 
                     ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20 shadow-[0_0_20px_rgba(59,130,246,0.1)]' 
                     : 'text-gray-400 hover:text-white hover:bg-white/5 border border-transparent'
@@ -1407,7 +1633,7 @@ export default function App() {
               </button>
               <button
                 onClick={() => setActiveTab('card')}
-                className={`w-full flex items-center gap-3 px-4 py-3.5 rounded-xl transition-all duration-300 cursor-pointer ${
+                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-300 cursor-pointer ${
                   activeTab === 'card' 
                     ? 'bg-purple-500/10 text-purple-400 border border-purple-500/20 shadow-[0_0_20px_rgba(168,85,247,0.1)]' 
                     : 'text-gray-400 hover:text-white hover:bg-white/5 border border-transparent'
@@ -1423,7 +1649,7 @@ export default function App() {
             <>
               <button
                 onClick={() => setActiveTab('analytics')}
-                className={`w-full flex items-center gap-3 px-4 py-3.5 rounded-xl transition-all duration-300 cursor-pointer ${
+                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-300 cursor-pointer ${
                   activeTab === 'analytics' 
                     ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20 shadow-[0_0_20px_rgba(59,130,246,0.1)]' 
                     : 'text-gray-400 hover:text-white hover:bg-white/5 border border-transparent'
@@ -1434,7 +1660,7 @@ export default function App() {
               </button>
               <button
                 onClick={() => setActiveTab('izin')}
-                className={`w-full flex items-center justify-between px-4 py-3.5 rounded-xl transition-all duration-300 cursor-pointer ${
+                className={`w-full flex items-center justify-between px-4 py-2.5 rounded-xl transition-all duration-300 cursor-pointer ${
                   activeTab === 'izin' 
                     ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20 shadow-[0_0_20px_rgba(245,158,11,0.1)]' 
                     : 'text-gray-400 hover:text-white hover:bg-white/5 border border-transparent'
@@ -1452,7 +1678,7 @@ export default function App() {
               </button>
               <button
                 onClick={() => setActiveTab('users')}
-                className={`w-full flex items-center gap-3 px-4 py-3.5 rounded-xl transition-all duration-300 cursor-pointer ${
+                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-300 cursor-pointer ${
                   activeTab === 'users' 
                     ? 'bg-purple-500/10 text-purple-400 border border-purple-500/20 shadow-[0_0_20px_rgba(168,85,247,0.1)]' 
                     : 'text-gray-400 hover:text-white hover:bg-white/5 border border-transparent'
@@ -1462,8 +1688,19 @@ export default function App() {
                 <span className="font-normal">Daftar Guru & Siswa</span>
               </button>
               <button
+                onClick={() => setActiveTab('academic-calendar')}
+                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-300 cursor-pointer ${
+                  activeTab === 'academic-calendar' 
+                    ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20 shadow-[0_0_20px_rgba(244,63,94,0.1)]' 
+                    : 'text-gray-400 hover:text-white hover:bg-white/5 border border-transparent'
+                }`}
+              >
+                <Calendar className="w-5 h-5" />
+                <span className="font-normal">Kalender & Libur</span>
+              </button>
+              <button
                 onClick={() => setActiveTab('settings')}
-                className={`w-full flex items-center gap-3 px-4 py-3.5 rounded-xl transition-all duration-300 cursor-pointer ${
+                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-300 cursor-pointer ${
                   activeTab === 'settings' 
                     ? 'bg-slate-500/10 text-slate-400 border border-slate-500/20 shadow-[0_0_20px_rgba(100,116,139,0.1)]' 
                     : 'text-gray-400 hover:text-white hover:bg-white/5 border border-transparent'
@@ -1474,7 +1711,7 @@ export default function App() {
               </button>
               <button
                 onClick={() => setActiveTab('export')}
-                className={`w-full flex items-center gap-3 px-4 py-3.5 rounded-xl transition-all duration-300 cursor-pointer ${
+                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-300 cursor-pointer ${
                   activeTab === 'export' 
                     ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shadow-[0_0_20px_rgba(16,185,129,0.1)]' 
                     : 'text-gray-400 hover:text-white hover:bg-white/5 border border-transparent'
@@ -1543,6 +1780,7 @@ export default function App() {
               {activeTab === 'analytics' && 'Analisis Data Presensi'}
               {activeTab === 'izin' && 'Persetujuan Izin & Sakit'}
               {activeTab === 'users' && 'Manajemen Guru & Siswa'}
+              {activeTab === 'academic-calendar' && 'Kalender Akademik & Hari Libur'}
               {activeTab === 'settings' && 'Pengaturan Sistem Sekolah'}
               {activeTab === 'export' && 'Pusat Laporan Menyeluruh'}
             </h2>
@@ -2088,12 +2326,27 @@ export default function App() {
                         </div>
                       </div>
                       
-                      <div className="pt-20 text-center">
+                      <div className="pt-20 text-center relative">
+                        {userRole === 'guru' && (
+                          <button
+                            onClick={() => {
+                              const t = teachers.find(x => x.nip === nip);
+                              if (t) {
+                                setEditingProfileData(t);
+                                setShowEditProfileModal(true);
+                              }
+                            }}
+                            className="absolute top-16 right-0 md:top-0 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-xs text-gray-300 transition-colors flex items-center gap-2"
+                          >
+                            <Edit className="w-3.5 h-3.5" />
+                            Edit Profil
+                          </button>
+                        )}
                         <h2 className="text-3xl font-normal text-white tracking-tight mb-1">{nama}</h2>
                         <p className="text-blue-400 font-mono text-sm mb-4">NIP: {nip}</p>
                         <span className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full text-sm font-normal bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shadow-[0_0_10px_rgba(52,211,153,0.2)]">
                           <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                          Guru Mapel Aktif
+                          {teachers.find(t => t.nip === nip)?.role || 'Guru Mapel Aktif'}
                         </span>
                       </div>
 
@@ -2105,7 +2358,9 @@ export default function App() {
                             </div>
                             <div>
                               <p className="text-xs text-gray-500 mb-0.5">Email Resmi</p>
-                              <p className="text-sm font-normal text-gray-200">tb.saiful@smpn1pabuaran.sch.id</p>
+                              <p className="text-sm font-normal text-gray-200">
+                                {teachers.find(t => t.nip === nip)?.email || '-'}
+                              </p>
                             </div>
                           </div>
                         </div>
@@ -2116,7 +2371,9 @@ export default function App() {
                             </div>
                             <div>
                               <p className="text-xs text-gray-500 mb-0.5">Telepon</p>
-                              <p className="text-sm font-normal text-gray-200">+62 877 6542 1209</p>
+                              <p className="text-sm font-normal text-gray-200">
+                                {teachers.find(t => t.nip === nip)?.phone || '-'}
+                              </p>
                             </div>
                           </div>
                         </div>
@@ -2138,7 +2395,9 @@ export default function App() {
                             </div>
                             <div>
                               <p className="text-xs text-gray-500 mb-0.5">Mata Pelajaran Utama</p>
-                              <p className="text-sm font-normal text-gray-200">Pendidikan Agama Islam (PAI)</p>
+                              <p className="text-sm font-normal text-gray-200">
+                                {teachers.find(t => t.nip === nip)?.mapel || '-'}
+                              </p>
                             </div>
                           </div>
                         </div>
@@ -2624,11 +2883,30 @@ export default function App() {
                     </div>
                     
                     <div className="space-y-3">
-                      {studentRecords.length === 0 && teachingSessionsToday.filter(s => s.status !== 'Belum Mulai').length === 0 && (
+                      {studentRecords.length === 0 && teachingSessionsToday.filter(s => s.status !== 'Belum Mulai').length === 0 && todayTeacherRecords.length === 0 && (
                         <div className="text-center py-8 text-gray-500 text-sm font-normal">
                           Belum ada aktivitas kehadiran saat ini.
                         </div>
                       )}
+
+                      {/* Presensi Datang/Pulang Guru Hari Ini */}
+                      {todayTeacherRecords.slice(0, 3).map(rec => (
+                        <div key={rec.id} className="p-4 bg-white/[0.02] border border-white/5 rounded-2xl flex items-center justify-between hover:bg-white/[0.04] transition-all">
+                          <div className="flex items-center gap-3">
+                            <div className="w-9 h-9 rounded-full bg-emerald-500/10 flex items-center justify-center text-emerald-400 font-normal text-xs">
+                              G
+                            </div>
+                            <div>
+                              <p className="text-sm font-normal text-white">{rec.nama} (Guru)</p>
+                              <p className="text-[11px] text-gray-400 font-normal">
+                                {rec.type} • NIP {rec.nip}
+                              </p>
+                            </div>
+                          </div>
+                          <span className="font-mono text-xs font-normal text-gray-400">{rec.time}</span>
+                        </div>
+                      ))}
+
                       {studentRecords.slice(0, 3).map(rec => (
                         <div key={rec.id} className="p-4 bg-white/[0.02] border border-white/5 rounded-2xl flex items-center justify-between">
                           <div className="flex items-center gap-3">
@@ -2646,8 +2924,8 @@ export default function App() {
                       {teachingSessionsToday.filter(s => s.status !== 'Belum Mulai').slice(0, 3).map(session => (
                         <div key={session.id} className="p-4 bg-white/[0.02] border border-white/5 rounded-2xl flex items-center justify-between">
                           <div className="flex items-center gap-3">
-                            <div className="w-9 h-9 rounded-full bg-emerald-500/10 flex items-center justify-center text-emerald-400 font-normal text-xs">
-                              G
+                            <div className="w-9 h-9 rounded-full bg-cyan-500/10 flex items-center justify-center text-cyan-400 font-normal text-xs">
+                              M
                             </div>
                             <div>
                               <p className="text-sm font-normal text-white">{session.name} (Guru)</p>
@@ -3061,6 +3339,105 @@ export default function App() {
                 </div>
 
 
+              </motion.div>
+            )}
+
+            {activeTab === 'academic-calendar' && (
+              <motion.div
+                key="academic-calendar"
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
+                transition={{ duration: 0.3 }}
+                className="max-w-4xl mx-auto space-y-6"
+              >
+                <div className="bg-white/[0.02] border border-white/10 rounded-3xl p-6 relative overflow-hidden">
+                  <div className="absolute top-0 right-0 w-64 h-64 bg-rose-500/5 rounded-full blur-3xl -z-10"></div>
+                  
+                  <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
+                    <div>
+                      <h3 className="text-xl font-normal text-white">Kelola Hari Libur</h3>
+                      <p className="text-sm text-gray-400 mt-1">Tambahkan tanggal merah atau kegiatan khusus sekolah yang meliburkan absensi.</p>
+                    </div>
+                  </div>
+
+                  <form className="bg-white/5 border border-white/10 p-5 rounded-2xl mb-8 flex flex-col md:flex-row gap-4 items-end" onSubmit={async (e) => {
+                    e.preventDefault();
+                    if(!newHolidayDate || !newHolidayName) return;
+                    const newHoliday = {
+                      id: String(Date.now()),
+                      date: newHolidayDate,
+                      name: newHolidayName
+                    };
+                    await saveHolidaySync(newHoliday);
+                    setHolidays(prev => [...prev, newHoliday].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()));
+                    setNewHolidayDate('');
+                    setNewHolidayName('');
+                    showNotification('Hari libur berhasil ditambahkan!', 'text-emerald-400');
+                  }}>
+                    <div className="w-full md:w-1/3">
+                      <label className="text-xs text-gray-400 ml-1 mb-1 block">Tanggal Libur</label>
+                      <input 
+                        type="date"
+                        value={newHolidayDate}
+                        onChange={(e) => setNewHolidayDate(e.target.value)}
+                        className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-rose-500/50"
+                        required
+                      />
+                    </div>
+                    <div className="w-full md:flex-1">
+                      <label className="text-xs text-gray-400 ml-1 mb-1 block">Keterangan / Nama Libur</label>
+                      <input 
+                        type="text"
+                        value={newHolidayName}
+                        onChange={(e) => setNewHolidayName(e.target.value)}
+                        placeholder="Contoh: Idul Fitri, Libur Semester"
+                        className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-rose-500/50"
+                        required
+                      />
+                    </div>
+                    <button type="submit" className="w-full md:w-auto px-6 py-2.5 bg-rose-500/20 text-rose-400 border border-rose-500/30 rounded-xl text-sm hover:bg-rose-500/30 transition-colors flex items-center justify-center gap-2">
+                      <Plus className="w-4 h-4" /> Tambah
+                    </button>
+                  </form>
+
+                  <div className="space-y-3">
+                    {holidays.length === 0 ? (
+                      <div className="text-center py-10 bg-white/5 rounded-2xl border border-white/5">
+                        <Calendar className="w-10 h-10 text-gray-600 mx-auto mb-3" />
+                        <p className="text-gray-400 font-normal">Belum ada hari libur yang ditambahkan.</p>
+                      </div>
+                    ) : (
+                      holidays.map(holiday => (
+                        <div key={holiday.id} className="bg-white/5 border border-white/10 rounded-xl p-4 flex items-center justify-between">
+                          <div className="flex items-center gap-4">
+                            <div className="w-10 h-10 rounded-lg bg-rose-500/20 flex items-center justify-center text-rose-400 font-medium">
+                              {new Date(holiday.date).getDate()}
+                            </div>
+                            <div>
+                              <div className="text-white font-normal">{holiday.name}</div>
+                              <div className="text-xs text-gray-400">
+                                {new Date(holiday.date).toLocaleDateString('id-ID', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+                              </div>
+                            </div>
+                          </div>
+                          <button
+                            onClick={async () => {
+                              if(window.confirm('Hapus hari libur ini?')) {
+                                await deleteHolidaySync(holiday.id);
+                                setHolidays(prev => prev.filter(h => h.id !== holiday.id));
+                                showNotification('Hari libur dihapus.', 'text-rose-400');
+                              }
+                            }}
+                            className="p-2 text-gray-500 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
               </motion.div>
             )}
 
@@ -3517,7 +3894,10 @@ export default function App() {
 
                       <div className="space-y-4">
                         <div className="relative">
-                          <select className="w-full appearance-none bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 pr-10 text-white text-sm focus:outline-none focus:border-purple-500/50 transition-colors">
+                          <select 
+                            value={exportTeacherMonth}
+                            onChange={(e) => setExportTeacherMonth(e.target.value)}
+                            className="w-full appearance-none bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 pr-10 text-white text-sm focus:outline-none focus:border-purple-500/50 transition-colors">
                             <option value="06-2026">Juni 2026</option>
                             <option value="05-2026">Mei 2026</option>
                             <option value="04-2026">April 2026</option>
@@ -3526,14 +3906,14 @@ export default function App() {
                           <ChevronDown className="w-4 h-4 text-gray-400 absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none" />
                         </div>
                         
-                        <div className="flex gap-3">
+                        <div className="flex gap-2">
                           <button 
                             onClick={() => {
                               const doc = new jsPDF();
                               doc.setFontSize(16);
                               doc.text('Laporan Rekapitulasi Absensi Guru', 14, 22);
                               doc.setFontSize(11);
-                              doc.text(`Periode: Juni 2026`, 14, 30);
+                              doc.text(`Periode: ${exportTeacherMonth === 'all' ? 'Semua Data' : exportTeacherMonth}`, 14, 30);
                               doc.text(`Dicetak pada: ${new Date().toLocaleDateString('id-ID')}`, 14, 36);
                               
                               const tableData = teachers.map((teacher, idx) => {
@@ -3569,12 +3949,12 @@ export default function App() {
                               doc.text(schoolSettings.headmasterName, 130, finalY4 + 50);
                               doc.text(`NIP. ${schoolSettings.headmasterNip}`, 130, finalY4 + 56);
 
-                              doc.save('Rekap_Absen_Guru_Juni_2026.pdf');
+                              doc.save(`Rekap_Absen_Guru_${exportTeacherMonth}.pdf`);
                               showNotification('Laporan Guru (PDF) berhasil diunduh!', 'text-emerald-400');
                             }}
-                            className="flex-1 px-4 py-2.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 rounded-xl text-sm transition-all cursor-pointer flex items-center justify-center gap-2"
+                            className="flex-1 px-2 py-2.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 rounded-xl text-xs sm:text-sm transition-all cursor-pointer flex items-center justify-center gap-1.5 sm:gap-2"
                           >
-                            <Download className="w-4 h-4" />
+                            <Download className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                             <span>PDF</span>
                           </button>
                           <button 
@@ -3605,14 +3985,22 @@ export default function App() {
                               const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
                               const link = document.createElement('a');
                               link.href = URL.createObjectURL(blob);
-                              link.download = 'Rekap_Absen_Guru_Juni_2026.csv';
+                              link.download = `Rekap_Absen_Guru_${exportTeacherMonth}.csv`;
                               link.click();
                               showNotification('Laporan Guru (Excel/CSV) berhasil diunduh!', 'text-emerald-400');
                             }}
-                            className="flex-1 px-4 py-2.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 rounded-xl text-sm transition-all cursor-pointer flex items-center justify-center gap-2"
+                            className="flex-1 px-2 py-2.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 rounded-xl text-xs sm:text-sm transition-all cursor-pointer flex items-center justify-center gap-1.5 sm:gap-2"
                           >
-                            <FileSpreadsheet className="w-4 h-4" />
+                            <FileSpreadsheet className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                             <span>Excel</span>
+                          </button>
+                          <button 
+                            onClick={() => handleDownloadPhotos(exportTeacherMonth)}
+                            className="flex-1 px-2 py-2.5 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 border border-indigo-500/20 rounded-xl text-xs sm:text-sm transition-all cursor-pointer flex items-center justify-center gap-1.5 sm:gap-2"
+                          >
+                            <Download className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                            <span className="hidden sm:inline">Foto (ZIP)</span>
+                            <span className="sm:hidden">ZIP</span>
                           </button>
                         </div>
                       </div>
@@ -3878,6 +4266,17 @@ export default function App() {
               <span className="text-[10px] font-normal">Daftar</span>
             </button>
             <button
+              onClick={() => setActiveTab('academic-calendar')}
+              className={`flex-1 flex flex-col items-center justify-center py-2 rounded-xl transition-all ${
+                activeTab === 'academic-calendar' 
+                  ? 'bg-rose-500/10 text-rose-400' 
+                  : 'text-gray-500 hover:text-gray-300'
+              }`}
+            >
+              <Calendar className={`w-5 h-5 mb-1 ${activeTab === 'academic-calendar' ? 'drop-shadow-[0_0_8px_rgba(244,63,94,0.5)]' : ''}`} />
+              <span className="text-[10px] font-normal">Kalender</span>
+            </button>
+            <button
               onClick={() => setActiveTab('settings')}
               className={`flex-1 flex flex-col items-center justify-center py-2 rounded-xl transition-all ${
                 activeTab === 'settings' 
@@ -3910,10 +4309,16 @@ export default function App() {
             initial={{ opacity: 0, y: -50, scale: 0.9 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: -20, scale: 0.9 }}
-            className="fixed top-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-5 py-3 rounded-2xl bg-[#05050A]/90 backdrop-blur-xl border border-white/10 shadow-[0_10px_40px_rgba(0,0,0,0.5)]"
+            className="fixed top-6 left-1/2 -translate-x-1/2 z-[9999] flex items-center gap-3 px-5 py-3 rounded-2xl bg-[#05050A]/90 backdrop-blur-xl border border-white/10 shadow-[0_10px_40px_rgba(0,0,0,0.5)]"
           >
             <div className={`p-1 rounded-full bg-[#05050A] shadow-inner ${notification.color}`}>
-              <CheckCircle2 className="w-5 h-5" />
+              {notification.color.includes('rose') || notification.color.includes('red') ? (
+                <XCircle className="w-5 h-5" />
+              ) : notification.color.includes('amber') || notification.color.includes('yellow') ? (
+                <AlertCircle className="w-5 h-5" />
+              ) : (
+                <CheckCircle2 className="w-5 h-5" />
+              )}
             </div>
             <span className="font-normal text-sm text-gray-100">{notification.message}</span>
           </motion.div>
@@ -4132,6 +4537,72 @@ export default function App() {
                   setEditingTeacher(null);
                 }}
                 className="px-4 py-2 bg-emerald-500 text-black rounded-lg text-xs font-normal cursor-pointer"
+              >
+                Simpan Perubahan
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Profile Modal (for Guru) */}
+      {showEditProfileModal && editingProfileData && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 z-[105] animate-[fadeIn_0.2s_ease-out]">
+          <div className="bg-[#0D0D19] border border-white/10 rounded-3xl p-6 w-full max-w-md relative shadow-2xl">
+            <h5 className="font-normal text-white text-lg mb-4">Edit Profil Anda</h5>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-normal text-gray-400 mb-1">NAMA LENGKAP</label>
+                <input 
+                  type="text" 
+                  value={editingProfileData.name} 
+                  onChange={(e) => setEditingProfileData({...editingProfileData, name: e.target.value})} 
+                  className="w-full px-4 py-2.5 bg-white/5 rounded-xl text-sm border border-white/10 text-white focus:outline-none focus:border-purple-500" 
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-normal text-gray-400 mb-1">EMAIL RESMI</label>
+                <input 
+                  type="email" 
+                  value={editingProfileData.email || ''} 
+                  onChange={(e) => setEditingProfileData({...editingProfileData, email: e.target.value})} 
+                  placeholder="emailanda@sekolah.sch.id"
+                  className="w-full px-4 py-2.5 bg-white/5 rounded-xl text-sm border border-white/10 text-white focus:outline-none focus:border-purple-500" 
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-normal text-gray-400 mb-1">TELEPON / WHATSAPP</label>
+                <input 
+                  type="text" 
+                  value={editingProfileData.phone || ''} 
+                  onChange={(e) => setEditingProfileData({...editingProfileData, phone: e.target.value})} 
+                  placeholder="+62 8..."
+                  className="w-full px-4 py-2.5 bg-white/5 rounded-xl text-sm border border-white/10 text-white focus:outline-none focus:border-purple-500" 
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-normal text-gray-400 mb-1">MATA PELAJARAN UTAMA</label>
+                <input 
+                  type="text" 
+                  value={editingProfileData.mapel} 
+                  onChange={(e) => setEditingProfileData({...editingProfileData, mapel: e.target.value})} 
+                  className="w-full px-4 py-2.5 bg-white/5 rounded-xl text-sm border border-white/10 text-white focus:outline-none focus:border-purple-500" 
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-3 mt-6">
+              <button onClick={() => { setShowEditProfileModal(false); setEditingProfileData(null); }} className="px-4 py-2 text-gray-400 hover:text-white text-xs font-normal cursor-pointer">Batal</button>
+              <button
+                onClick={() => {
+                  if (!editingProfileData.name) return;
+                  setTeachers(prev => prev.map(t => t.nip === editingProfileData.nip ? editingProfileData : t));
+                  saveTeacherSync(editingProfileData);
+                  setNama(editingProfileData.name);
+                  showNotification(`Profil Anda berhasil diperbarui!`, 'text-emerald-400');
+                  setShowEditProfileModal(false);
+                  setEditingProfileData(null);
+                }}
+                className="px-4 py-2 bg-purple-500 hover:bg-purple-400 text-white rounded-lg text-xs font-normal cursor-pointer transition-colors"
               >
                 Simpan Perubahan
               </button>
