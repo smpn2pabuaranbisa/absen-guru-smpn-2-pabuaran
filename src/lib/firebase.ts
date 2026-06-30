@@ -12,5 +12,9 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 
-// Initialize Firestore with the specific non-default databaseId as the third argument
-export const db = initializeFirestore(app, {}, "ai-studio-copyofabsensigur-e555e497-08a9-4618-b30f-e76dd5f2da65");
+// Initialize Firestore with experimentalAutoDetectLongPolling enabled to ensure connection stability in sandboxed environments
+export const db = initializeFirestore(app, {
+  experimentalAutoDetectLongPolling: true
+}, "ai-studio-copyofabsensigur-e555e497-08a9-4618-b30f-e76dd5f2da65");
+
+
