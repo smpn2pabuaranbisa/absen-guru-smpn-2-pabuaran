@@ -36,7 +36,12 @@ import {
   saveSystemSettingsSync,
   getHolidaysSync,
   saveHolidaySync,
-  deleteHolidaySync
+  deleteHolidaySync,
+  getPiketScheduleSync,
+  savePiketScheduleSync,
+  getClassSubstitutionsSync,
+  saveClassSubstitutionSync,
+  deleteClassSubstitutionSync
 } from './lib/firebaseSync';
 
 type AttendanceRecord = {
@@ -96,6 +101,28 @@ export default function App() {
   const [teachingSessionsToday, setTeachingSessionsToday] = useState<{id: string, name: string, nip: string, mapel: string, kelas: string, jam: string, status: string, timeStarted: string, timeEnded: string}[]>([]);
 
   const [izinRequests, setIzinRequests] = useState<{id: string, name: string, nip: string, tipe: string, tanggalMulai: string, tanggalSelesai: string, alasan: string, status: string, attachment: string | null}[]>([]);
+
+  // Guru Piket & Substitusi Kelas
+  const [piketSchedule, setPiketSchedule] = useState<{ id: string; day: string; teacherNips: string[] }[]>([]);
+  const [classSubstitutions, setClassSubstitutions] = useState<any[]>([]);
+  const [showAddSubstitutionModal, setShowAddSubstitutionModal] = useState(false);
+  const [newSubDate, setNewSubDate] = useState(() => {
+    const today = new Date();
+    return today.toISOString().split('T')[0];
+  });
+  const [newSubClass, setNewSubClass] = useState('');
+  const [newSubSubject, setNewSubSubject] = useState('');
+  const [newSubHours, setNewSubHours] = useState('');
+  const [newSubAbsentNip, setNewSubAbsentNip] = useState('');
+  const [newSubSubNip, setNewSubSubNip] = useState('');
+  const [newSubTask, setNewSubTask] = useState('');
+
+  const [editingPiketDay, setEditingPiketDay] = useState<any | null>(null);
+  const [showEditPiketModal, setShowEditPiketModal] = useState(false);
+  const [reportingSubId, setReportingSubId] = useState<string | null>(null);
+  const [showReportSubModal, setShowReportSubModal] = useState(false);
+  const [reportSubNotes, setReportSubNotes] = useState('');
+  const [piketInnerTab, setPiketInnerTab] = useState<'substitusi' | 'jadwal' | 'riwayat'>('substitusi');
 
   const [records, setRecords] = useState<AttendanceRecord[]>([]);
   const [confirmDeleteTeacherRecords, setConfirmDeleteTeacherRecords] = useState(false);
@@ -685,6 +712,19 @@ export default function App() {
           setHolidays(loadedHolidays);
         }
 
+        const loadedPiketSchedule = await getPiketScheduleSync([
+          { id: 'Senin', day: 'Senin', teacherNips: [] },
+          { id: 'Selasa', day: 'Selasa', teacherNips: [] },
+          { id: 'Rabu', day: 'Rabu', teacherNips: [] },
+          { id: 'Kamis', day: 'Kamis', teacherNips: [] },
+          { id: 'Jumat', day: 'Jumat', teacherNips: [] },
+          { id: 'Sabtu', day: 'Sabtu', teacherNips: [] }
+        ]);
+        setPiketSchedule(loadedPiketSchedule);
+
+        const loadedSubstitutions = await getClassSubstitutionsSync();
+        setClassSubstitutions(loadedSubstitutions);
+
         const loadedSettings = await getSystemSettingsSync(schoolSettings);
         if (loadedSettings) {
           setSchoolSettings(prev => ({ ...prev, ...loadedSettings }));
@@ -697,6 +737,114 @@ export default function App() {
     }
     loadFirebaseData();
   }, []);
+
+  // Handlers for Guru Piket & Substitusi Kelas
+  const handleAddSubstitution = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newSubDate || !newSubClass || !newSubSubject || !newSubHours || !newSubAbsentNip || !newSubSubNip) {
+      showNotification('Mohon lengkapi seluruh kolom wajib!', 'text-rose-400');
+      return;
+    }
+    const absentTeacherObj = teachers.find(t => t.nip === newSubAbsentNip);
+    const subTeacherObj = teachers.find(t => t.nip === newSubSubNip);
+    const newSub = {
+      id: 'sub_' + Math.random().toString(36).substr(2, 9),
+      date: newSubDate,
+      class: newSubClass,
+      subject: newSubSubject,
+      hours: newSubHours,
+      absentTeacherNip: newSubAbsentNip,
+      absentTeacherName: absentTeacherObj?.name || '',
+      substituteTeacherNip: newSubSubNip,
+      substituteTeacherName: subTeacherObj?.name || '',
+      taskDescription: newSubTask,
+      status: 'Pending',
+      notes: '',
+      createdAt: new Date().toISOString()
+    };
+    try {
+      await saveClassSubstitutionSync(newSub);
+      setClassSubstitutions(prev => [newSub, ...prev]);
+      showNotification('Tugas substitusi kelas berhasil dibuat!', 'text-emerald-400');
+      setShowAddSubstitutionModal(false);
+      
+      // WhatsApp Notification to substitute teacher
+      if (subTeacherObj?.phone) {
+        const waMsg = `🔔 *NOTIFIKASI TUGAS GURU PENGGANTI*\n\nYth. Bapak/Ibu *${subTeacherObj.name}*,\nAnda ditugaskan sebagai Guru Pengganti (Substitusi) oleh Guru Piket pada:\n📅 Tanggal: ${newSubDate}\n🏫 Kelas: ${newSubClass}\n📚 Mata Pelajaran: ${newSubSubject}\n⏰ Jam Pelajaran: ${newSubHours}\n👤 Menggantikan: Bapak/Ibu *${absentTeacherObj?.name || ''}* (Berhalangan)\n\n📝 Tugas/Instruksi Kelas:\n"${newSubTask || '-'}"\n\nHarap hadir tepat waktu dan memandu kelas tersebut.\nLaporan penyelesaian tugas dapat dikirimkan melalui aplikasi Absensi.\n\nTerima kasih atas dedikasi Anda!\n~ *${schoolSettings.schoolName}*`;
+        await sendWhatsAppNotification(subTeacherObj.phone, waMsg, true);
+      }
+      
+      // Reset form states
+      setNewSubClass('');
+      setNewSubSubject('');
+      setNewSubHours('');
+      setNewSubAbsentNip('');
+      setNewSubSubNip('');
+      setNewSubTask('');
+    } catch (err) {
+      showNotification('Gagal membuat tugas substitusi kelas.', 'text-rose-400');
+    }
+  };
+
+  const handleReportSubstitution = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!reportingSubId || !reportSubNotes) {
+      showNotification('Mohon isi catatan laporan!', 'text-rose-400');
+      return;
+    }
+    const targetSub = classSubstitutions.find(s => s.id === reportingSubId);
+    if (!targetSub) return;
+    const updatedSub = {
+      ...targetSub,
+      status: 'Selesai',
+      notes: reportSubNotes,
+      updatedAt: new Date().toISOString()
+    };
+    try {
+      await saveClassSubstitutionSync(updatedSub);
+      setClassSubstitutions(prev => prev.map(s => s.id === reportingSubId ? updatedSub : s));
+      showNotification('Laporan substitusi kelas berhasil dikirim!', 'text-emerald-400');
+      setShowReportSubModal(false);
+      setReportSubNotes('');
+      setReportingSubId(null);
+
+      // Notify original teacher or admin via WA
+      const absentTeacherObj = teachers.find(t => t.nip === targetSub.absentTeacherNip);
+      if (absentTeacherObj?.phone) {
+        const waMsg = `📢 *LAPORAN PENYELESAIAN SUBSTITUSI*\n\nYth. Bapak/Ibu *${absentTeacherObj.name}*,\nTugas substitusi kelas Anda telah diselesaikan oleh Guru Pengganti:\n📅 Tanggal: ${targetSub.date}\n🏫 Kelas: ${targetSub.class}\n📚 Mata Pelajaran: ${targetSub.subject}\n👤 Guru Pengganti: Bapak/Ibu *${targetSub.substituteTeacherName}*\n\n📝 Catatan Pelaksanaan:\n"${reportSubNotes}"\n\nSesi kelas Anda telah terisi dengan aman.\nTerima kasih!\n~ *${schoolSettings.schoolName}*`;
+        await sendWhatsAppNotification(absentTeacherObj.phone, waMsg, true);
+      }
+    } catch (err) {
+      showNotification('Gagal mengirim laporan substitusi.', 'text-rose-400');
+    }
+  };
+
+  const handleDeleteSubstitution = async (id: string) => {
+    try {
+      await deleteClassSubstitutionSync(id);
+      setClassSubstitutions(prev => prev.filter(s => s.id !== id));
+      showNotification('Tugas substitusi kelas berhasil dihapus!', 'text-emerald-400');
+    } catch (err) {
+      showNotification('Gagal menghapus tugas substitusi.', 'text-rose-400');
+    }
+  };
+
+  const handleSavePiketSchedule = async (dayId: string, selectedNips: string[]) => {
+    const updatedDay = {
+      id: dayId,
+      day: dayId,
+      teacherNips: selectedNips
+    };
+    try {
+      await savePiketScheduleSync(updatedDay);
+      setPiketSchedule(prev => prev.map(p => p.id === dayId ? updatedDay : p));
+      showNotification(`Jadwal guru piket Hari ${dayId} berhasil diperbarui!`, 'text-emerald-400');
+      setShowEditPiketModal(false);
+      setEditingPiketDay(null);
+    } catch (err) {
+      showNotification('Gagal memperbarui jadwal guru piket.', 'text-rose-400');
+    }
+  };
 
   // Login Handlers
   const handleManualLogin = (e: React.FormEvent) => {
@@ -1845,6 +1993,17 @@ export default function App() {
                 <span className="font-normal">Scan Barcode Siswa</span>
               </button>
               <button
+                onClick={() => setActiveTab('piket')}
+                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-300 cursor-pointer ${
+                  activeTab === 'piket' 
+                    ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20 shadow-[0_0_20px_rgba(245,158,11,0.1)]' 
+                    : 'text-gray-400 hover:text-white hover:bg-white/5 border border-transparent'
+                }`}
+              >
+                <Shield className="w-5 h-5" />
+                <span className="font-normal">Guru Piket & Substitusi</span>
+              </button>
+              <button
                 onClick={() => setActiveTab('profile')}
                 className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-300 cursor-pointer ${
                   activeTab === 'profile' 
@@ -1915,6 +2074,17 @@ export default function App() {
                     {izinRequests.filter(r => r.status === 'Pending').length}
                   </span>
                 )}
+              </button>
+              <button
+                onClick={() => setActiveTab('piket')}
+                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-300 cursor-pointer ${
+                  activeTab === 'piket' 
+                    ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20 shadow-[0_0_20px_rgba(245,158,11,0.1)]' 
+                    : 'text-gray-400 hover:text-white hover:bg-white/5 border border-transparent'
+                }`}
+              >
+                <Shield className="w-5 h-5" />
+                <span className="font-normal">Guru Piket & Substitusi</span>
               </button>
               <button
                 onClick={() => setActiveTab('users')}
@@ -2019,6 +2189,7 @@ export default function App() {
               {activeTab === 'card' && 'Kartu Anggota Virtual'}
               {activeTab === 'analytics' && 'Analisis Data Presensi'}
               {activeTab === 'izin' && 'Persetujuan Izin & Sakit'}
+              {activeTab === 'piket' && 'Guru Piket & Substitusi Kelas'}
               {activeTab === 'users' && 'Manajemen Guru & Siswa'}
               {activeTab === 'academic-calendar' && 'Kalender Akademik & Hari Libur'}
               {activeTab === 'settings' && 'Pengaturan Sistem Sekolah'}
@@ -4376,6 +4547,386 @@ export default function App() {
               </motion.div>
             )}
 
+            {activeTab === 'piket' && (
+              <motion.div
+                key="piket"
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
+                className="p-6 sm:p-10 space-y-6 text-gray-200"
+              >
+                {/* Header KPI Stats Cards */}
+                {(() => {
+                  const indonesianDays = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+                  const todayDayName = indonesianDays[new Date().getDay()];
+                  const todayPiketObj = piketSchedule.find(p => p.day === todayDayName);
+                  const todayPiketTeachers = todayPiketObj?.teacherNips?.map(n => teachers.find(t => t.nip === n)).filter(Boolean) || [];
+                  
+                  // Absent teachers today (approved Izin / Sakit on today's date)
+                  const todayStr = new Date().toISOString().split('T')[0];
+                  const absentTeachersList = izinRequests.filter(req => {
+                    return req.status === 'Disetujui' && todayStr >= req.tanggalMulai && todayStr <= req.tanggalSelesai;
+                  });
+                  
+                  // Active class substitutions today
+                  const activeSubsToday = classSubstitutions.filter(sub => sub.date === todayStr);
+                  const pendingSubsTodayCount = activeSubsToday.filter(sub => sub.status === 'Pending').length;
+
+                  return (
+                    <>
+                      {/* STATS HEADER */}
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        {/* CARD 1: GURU PIKET HARI INI */}
+                        <div className="bg-[#0D0D15]/80 backdrop-blur-xl border border-white/5 rounded-2xl p-6 relative overflow-hidden shadow-xl">
+                          <div className="absolute top-0 right-0 p-4 opacity-5">
+                            <Shield className="w-24 h-24 text-amber-500" />
+                          </div>
+                          <div className="flex items-center gap-4">
+                            <div className="w-12 h-12 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400">
+                              <Shield className="w-6 h-6" />
+                            </div>
+                            <div>
+                              <h4 className="text-xs text-gray-400 uppercase tracking-wider font-normal">Guru Piket Hari Ini ({todayDayName})</h4>
+                              <p className="text-sm font-medium mt-1 text-white">
+                                {todayPiketTeachers.length > 0 
+                                  ? todayPiketTeachers.map((t: any) => t.name).join(', ') 
+                                  : 'Belum ada jadwal hari ini'}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* CARD 2: GURU BERHALANGAN */}
+                        <div className="bg-[#0D0D15]/80 backdrop-blur-xl border border-white/5 rounded-2xl p-6 relative overflow-hidden shadow-xl">
+                          <div className="absolute top-0 right-0 p-4 opacity-5">
+                            <UserMinus className="w-24 h-24 text-rose-500" />
+                          </div>
+                          <div className="flex items-center gap-4">
+                            <div className="w-12 h-12 rounded-xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400">
+                              <UserMinus className="w-6 h-6" />
+                            </div>
+                            <div>
+                              <h4 className="text-xs text-gray-400 uppercase tracking-wider font-normal">Berhalangan Hadir Hari Ini</h4>
+                              <p className="text-xl font-normal mt-1 text-white">
+                                {absentTeachersList.length} <span className="text-xs text-gray-400">Guru (Izin / Sakit)</span>
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* CARD 3: TOTAL SUBSTITUSI */}
+                        <div className="bg-[#0D0D15]/80 backdrop-blur-xl border border-white/5 rounded-2xl p-6 relative overflow-hidden shadow-xl">
+                          <div className="absolute top-0 right-0 p-4 opacity-5">
+                            <Activity className="w-24 h-24 text-blue-500" />
+                          </div>
+                          <div className="flex items-center gap-4">
+                            <div className="w-12 h-12 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400">
+                              <Activity className="w-6 h-6" />
+                            </div>
+                            <div>
+                              <h4 className="text-xs text-gray-400 uppercase tracking-wider font-normal">Tugas Substitusi Kelas Hari Ini</h4>
+                              <p className="text-xl font-normal mt-1 text-white">
+                                {pendingSubsTodayCount} <span className="text-xs text-gray-400">Menunggu Pelaksanaan</span>
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* INNER NAVIGATION TABS */}
+                      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-white/5 pb-4">
+                        <div className="flex items-center gap-2 bg-[#0D0D15]/60 p-1 rounded-xl border border-white/5 w-fit">
+                          <button
+                            onClick={() => setPiketInnerTab('substitusi')}
+                            className={`px-4 py-2 rounded-lg text-xs font-medium transition-all cursor-pointer ${
+                              piketInnerTab === 'substitusi'
+                                ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30 shadow-[0_0_15px_rgba(245,158,11,0.1)]'
+                                : 'text-gray-400 hover:text-white'
+                            }`}
+                          >
+                            Substitusi Kelas Active
+                          </button>
+                          <button
+                            onClick={() => setPiketInnerTab('jadwal')}
+                            className={`px-4 py-2 rounded-lg text-xs font-medium transition-all cursor-pointer ${
+                              piketInnerTab === 'jadwal'
+                                ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30 shadow-[0_0_15px_rgba(245,158,11,0.1)]'
+                                : 'text-gray-400 hover:text-white'
+                            }`}
+                          >
+                            Jadwal Piket Mingguan
+                          </button>
+                          <button
+                            onClick={() => setPiketInnerTab('riwayat')}
+                            className={`px-4 py-2 rounded-lg text-xs font-medium transition-all cursor-pointer ${
+                              piketInnerTab === 'riwayat'
+                                ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30 shadow-[0_0_15px_rgba(245,158,11,0.1)]'
+                                : 'text-gray-400 hover:text-white'
+                            }`}
+                          >
+                            Riwayat Arsip Substitusi
+                          </button>
+                        </div>
+
+                        {/* Action buttons (only for admin or today's piket teachers) */}
+                        {piketInnerTab === 'substitusi' && (userRole === 'admin' || todayPiketObj?.teacherNips?.includes(nip)) && (
+                          <button
+                            onClick={() => {
+                              setNewSubDate(new Date().toISOString().split('T')[0]);
+                              setShowAddSubstitutionModal(true);
+                            }}
+                            className="px-4 py-2.5 bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-500 hover:to-amber-600 text-white rounded-xl text-xs font-normal transition-all active:scale-95 flex items-center gap-2 shadow-lg shadow-amber-600/10 border border-amber-500/35 cursor-pointer"
+                          >
+                            <Plus className="w-4 h-4" /> Buat Substitusi Kelas
+                          </button>
+                        )}
+                      </div>
+
+                      {/* SUB-VIEW 1: ACTIVE SUBSTITUSI */}
+                      {piketInnerTab === 'substitusi' && (
+                        <div className="space-y-4">
+                          <h3 className="text-sm font-normal text-gray-400">Tugas Substitusi Hari Ini ({new Date().toLocaleDateString('id-ID', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })})</h3>
+                          
+                          {activeSubsToday.length === 0 ? (
+                            <div className="bg-[#0D0D15]/60 border border-white/5 rounded-2xl p-10 text-center flex flex-col items-center justify-center space-y-3">
+                              <div className="w-12 h-12 rounded-full bg-white/5 flex items-center justify-center text-gray-400">
+                                <BookOpen className="w-6 h-6" />
+                              </div>
+                              <h4 className="text-sm font-normal text-white">Tidak Ada Tugas Substitusi Hari Ini</h4>
+                              <p className="text-xs text-gray-500 max-w-sm">Seluruh guru utama terjadwal mengajar dengan lancar atau belum ada pelaporan guru pengganti yang diinput.</p>
+                            </div>
+                          ) : (
+                            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+                              {activeSubsToday.map((sub: any) => {
+                                const isUserSubstitute = sub.substituteTeacherNip === nip;
+                                return (
+                                  <div 
+                                    key={sub.id} 
+                                    className={`bg-[#0D0D15]/80 backdrop-blur-xl border rounded-2xl p-6 space-y-4 shadow-xl transition-all relative ${
+                                      isUserSubstitute && sub.status === 'Pending'
+                                        ? 'border-amber-500/40 shadow-[0_0_20px_rgba(245,158,11,0.05)] ring-1 ring-amber-500/20'
+                                        : 'border-white/5'
+                                    }`}
+                                  >
+                                    {isUserSubstitute && sub.status === 'Pending' && (
+                                      <span className="absolute top-0 right-0 mt-4 mr-4 px-2 py-0.5 text-[9px] font-medium bg-amber-500 text-[#05050A] rounded-full animate-pulse uppercase tracking-wider">
+                                        Tugas Anda!
+                                      </span>
+                                    )}
+
+                                    <div className="flex items-start justify-between">
+                                      <div className="space-y-1">
+                                        <div className="flex items-center gap-2">
+                                          <span className="px-2.5 py-1 text-xs font-semibold bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded-lg">
+                                            Kelas {sub.class}
+                                          </span>
+                                          <span className="text-xs text-gray-500 font-normal">
+                                            Jam: {sub.hours}
+                                          </span>
+                                        </div>
+                                        <h4 className="text-base font-normal text-white mt-2">{sub.subject}</h4>
+                                      </div>
+
+                                      <span className={`px-2.5 py-1 text-[10px] font-semibold rounded-lg uppercase tracking-wider ${
+                                        sub.status === 'Selesai'
+                                          ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                                          : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+                                      }`}>
+                                        {sub.status}
+                                      </span>
+                                    </div>
+
+                                    <div className="grid grid-cols-2 gap-4 py-3 border-t border-b border-white/5">
+                                      <div>
+                                        <span className="text-[10px] text-gray-500 block uppercase tracking-wider">Guru Berhalangan</span>
+                                        <p className="text-xs text-rose-400 font-medium mt-0.5">{sub.absentTeacherName}</p>
+                                        <span className="text-[9px] text-gray-500 block">NIP: {sub.absentTeacherNip}</span>
+                                      </div>
+                                      <div>
+                                        <span className="text-[10px] text-gray-500 block uppercase tracking-wider">Guru Pengganti</span>
+                                        <p className="text-xs text-emerald-400 font-medium mt-0.5">{sub.substituteTeacherName}</p>
+                                        <span className="text-[9px] text-gray-500 block">NIP: {sub.substituteTeacherNip}</span>
+                                      </div>
+                                    </div>
+
+                                    <div className="space-y-1.5">
+                                      <span className="text-[10px] text-gray-500 block uppercase tracking-wider">Tugas / Materi Pembelajaran:</span>
+                                      <p className="text-xs text-gray-300 bg-white/5 border border-white/5 rounded-xl p-3.5 italic leading-relaxed">
+                                        "{sub.taskDescription || 'Mengerjakan tugas mandiri atau membaca buku paket.'}"
+                                      </p>
+                                    </div>
+
+                                    {sub.notes && (
+                                      <div className="space-y-1.5 bg-emerald-500/5 border border-emerald-500/10 rounded-xl p-3.5">
+                                        <span className="text-[10px] text-emerald-400 block uppercase tracking-wider font-semibold">Laporan Penyelesaian Kelas:</span>
+                                        <p className="text-xs text-emerald-300 italic">
+                                          "{sub.notes}"
+                                        </p>
+                                      </div>
+                                    )}
+
+                                    {/* Action items */}
+                                    <div className="flex items-center justify-between pt-2">
+                                      <div>
+                                        {userRole === 'admin' && (
+                                          <button
+                                            onClick={() => {
+                                              if (confirm('Apakah Anda yakin ingin menghapus tugas substitusi ini?')) {
+                                                handleDeleteSubstitution(sub.id);
+                                              }
+                                            }}
+                                            className="text-rose-400 hover:text-rose-300 text-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+                                          >
+                                            <Trash2 className="w-4 h-4" /> Hapus
+                                          </button>
+                                        )}
+                                      </div>
+
+                                      {isUserSubstitute && sub.status === 'Pending' && (
+                                        <button
+                                          onClick={() => {
+                                            setReportingSubId(sub.id);
+                                            setReportSubNotes('');
+                                            setShowReportSubModal(true);
+                                          }}
+                                          className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-[#05050A] rounded-xl text-xs font-semibold shadow-lg shadow-amber-500/10 transition-colors flex items-center gap-1.5 cursor-pointer"
+                                        >
+                                          <Check className="w-4 h-4" /> Selesaikan & Lapor
+                                        </button>
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* SUB-VIEW 2: WEEKLY PIKET GRID */}
+                      {piketInnerTab === 'jadwal' && (
+                        <div className="space-y-4">
+                          <h3 className="text-sm font-normal text-gray-400">Jadwal Tugas Guru Piket Mingguan</h3>
+                          
+                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                            {['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'].map(day => {
+                              const daySched = piketSchedule.find(p => p.day === day);
+                              const assignedNips = daySched?.teacherNips || [];
+                              const assignedTeachers = assignedNips.map(n => teachers.find(t => t.nip === n)).filter(Boolean);
+
+                              return (
+                                <div key={day} className="bg-[#0D0D15]/80 backdrop-blur-xl border border-white/5 rounded-2xl p-5 space-y-4 flex flex-col justify-between shadow-xl min-h-[180px]">
+                                  <div className="space-y-3">
+                                    <div className="flex items-center justify-between border-b border-white/5 pb-2">
+                                      <span className="font-semibold text-sm text-white flex items-center gap-2">
+                                        <Calendar className="w-4 h-4 text-amber-400" />
+                                        Hari {day}
+                                      </span>
+                                      <span className="text-[10px] text-gray-500 bg-white/5 px-2 py-0.5 rounded-full font-normal">
+                                        {assignedTeachers.length} Guru
+                                      </span>
+                                    </div>
+
+                                    {assignedTeachers.length === 0 ? (
+                                      <p className="text-xs text-gray-500 italic">Belum ada guru piket ditugaskan</p>
+                                    ) : (
+                                      <ul className="space-y-2">
+                                        {assignedTeachers.map((t: any) => (
+                                          <li key={t.nip} className="flex items-center gap-2 text-xs text-gray-300">
+                                            <span className="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
+                                            <div>
+                                              <p className="font-medium text-white">{t.name}</p>
+                                              <p className="text-[10px] text-gray-500">NIP: {t.nip}</p>
+                                            </div>
+                                          </li>
+                                        ))}
+                                      </ul>
+                                    )}
+                                  </div>
+
+                                  {userRole === 'admin' && (
+                                    <button
+                                      onClick={() => {
+                                        setEditingPiketDay(daySched || { id: day, day: day, teacherNips: [] });
+                                        setShowEditPiketModal(true);
+                                      }}
+                                      className="w-full mt-3 py-2 border border-white/5 hover:border-amber-500/30 hover:bg-amber-500/5 text-amber-400 rounded-xl text-xs font-normal transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                                    >
+                                      <Edit className="w-3.5 h-3.5" /> Kelola Guru Piket
+                                    </button>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* SUB-VIEW 3: RIWAYAT ARCHIVE */}
+                      {piketInnerTab === 'riwayat' && (
+                        <div className="bg-[#0D0D15]/80 backdrop-blur-xl border border-white/5 rounded-2xl p-6 space-y-4 shadow-xl">
+                          <div className="flex items-center justify-between pb-4 border-b border-white/5">
+                            <h3 className="text-sm font-normal text-white">Arsip Historis Substitusi Kelas</h3>
+                            <span className="text-xs text-gray-400">{classSubstitutions.length} Total Catatan</span>
+                          </div>
+
+                          {classSubstitutions.length === 0 ? (
+                            <div className="py-12 text-center text-gray-500 text-xs italic">
+                              Belum ada riwayat tugas substitusi kelas yang tercatat dalam sistem.
+                            </div>
+                          ) : (
+                            <div className="overflow-x-auto">
+                              <table className="w-full text-left text-xs text-gray-300">
+                                <thead className="bg-[#05050A] text-gray-400 uppercase tracking-wider text-[10px] border-b border-white/5">
+                                  <tr>
+                                    <th className="py-3.5 px-4 font-normal">Tanggal</th>
+                                    <th className="py-3.5 px-4 font-normal">Kelas & Mapel</th>
+                                    <th className="py-3.5 px-4 font-normal">Guru Utama</th>
+                                    <th className="py-3.5 px-4 font-normal">Guru Pengganti</th>
+                                    <th className="py-3.5 px-4 font-normal">Status</th>
+                                    <th className="py-3.5 px-4 font-normal">Laporan / Catatan</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-white/5">
+                                  {classSubstitutions.map((sub: any) => (
+                                    <tr key={sub.id} className="hover:bg-white/5 transition-colors">
+                                      <td className="py-4 px-4 font-normal">{sub.date}</td>
+                                      <td className="py-4 px-4 font-normal">
+                                        <p className="font-semibold text-white">Kelas {sub.class}</p>
+                                        <p className="text-[10px] text-gray-500">{sub.subject}</p>
+                                      </td>
+                                      <td className="py-4 px-4 font-normal text-rose-400/95">{sub.absentTeacherName}</td>
+                                      <td className="py-4 px-4 font-normal text-emerald-400/95">{sub.substituteTeacherName}</td>
+                                      <td className="py-4 px-4 font-normal">
+                                        <span className={`px-2 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wider ${
+                                          sub.status === 'Selesai'
+                                            ? 'bg-emerald-500/10 text-emerald-400'
+                                            : 'bg-amber-500/10 text-amber-400'
+                                        }`}>
+                                          {sub.status}
+                                        </span>
+                                      </td>
+                                      <td className="py-4 px-4 font-normal max-w-xs truncate" title={sub.notes || sub.taskDescription}>
+                                        {sub.status === 'Selesai' ? (
+                                          <p className="text-gray-300">{sub.notes || '-'}</p>
+                                        ) : (
+                                          <p className="text-gray-500 italic">Task: {sub.taskDescription || '-'}</p>
+                                        )}
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
+              </motion.div>
+            )}
+
             {activeTab === 'export' && (
               <motion.div
                 key="export"
@@ -5000,6 +5551,283 @@ export default function App() {
                 className="px-4 py-2 bg-blue-600 text-white rounded-lg text-xs font-normal cursor-pointer"
               >
                 Simpan Siswa
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Tambah Substitusi Kelas */}
+      {showAddSubstitutionModal && (
+        <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 z-[110] animate-[fadeIn_0.2s_ease-out]">
+          <div className="bg-[#0D0D19] border border-white/10 rounded-3xl p-6 w-full max-w-lg relative shadow-2xl max-h-[90vh] overflow-y-auto">
+            <button 
+              type="button"
+              onClick={() => setShowAddSubstitutionModal(false)}
+              className="absolute top-4 right-4 text-gray-400 hover:text-white transition-colors cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+            <h5 className="font-normal text-white text-lg mb-4 flex items-center gap-2">
+              <Plus className="w-5 h-5 text-amber-500" />
+              Buat Tugas Substitusi Kelas
+            </h5>
+            <form onSubmit={handleAddSubstitution} className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-normal text-gray-400 mb-1">TANGGAL TUGAS *</label>
+                  <input 
+                    type="date" 
+                    value={newSubDate} 
+                    onChange={(e) => setNewSubDate(e.target.value)} 
+                    required
+                    className="w-full px-4 py-2.5 bg-white/5 rounded-xl text-sm border border-white/10 text-white focus:outline-none focus:border-amber-500" 
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-normal text-gray-400 mb-1">JAM PELAJARAN *</label>
+                  <input 
+                    type="text" 
+                    value={newSubHours} 
+                    onChange={(e) => setNewSubHours(e.target.value)} 
+                    placeholder="Contoh: Jam 3 s/d 4" 
+                    required
+                    className="w-full px-4 py-2.5 bg-white/5 rounded-xl text-sm border border-white/10 text-white focus:outline-none focus:border-amber-500" 
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-normal text-gray-400 mb-1">RUANG KELAS *</label>
+                  <select 
+                    value={newSubClass} 
+                    onChange={(e) => setNewSubClass(e.target.value)}
+                    required
+                    className="w-full px-4 py-2.5 bg-[#0D0D19] border border-white/10 rounded-xl text-sm text-white focus:outline-none focus:border-amber-500 appearance-none"
+                  >
+                    <option value="">-- Pilih Kelas --</option>
+                    {Array.from(new Set(students.map(s => s.kelas).filter(Boolean))).sort().map(kls => (
+                      <option key={kls} value={kls}>{kls}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-normal text-gray-400 mb-1">MATA PELAJARAN *</label>
+                  <input 
+                    type="text" 
+                    value={newSubSubject} 
+                    onChange={(e) => setNewSubSubject(e.target.value)} 
+                    placeholder="Contoh: Matematika" 
+                    required
+                    className="w-full px-4 py-2.5 bg-white/5 rounded-xl text-sm border border-white/10 text-white focus:outline-none focus:border-amber-500" 
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-normal text-gray-400 mb-1">GURU YANG BERHALANGAN *</label>
+                <select 
+                  value={newSubAbsentNip} 
+                  onChange={(e) => setNewSubAbsentNip(e.target.value)}
+                  required
+                  className="w-full px-4 py-2.5 bg-[#0D0D19] border border-white/10 rounded-xl text-sm text-white focus:outline-none focus:border-amber-500 appearance-none"
+                >
+                  <option value="">-- Pilih Guru Utama --</option>
+                  {teachers.map(t => (
+                    <option key={t.nip} value={t.nip}>{t.name} (NIP: {t.nip})</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-normal text-gray-400 mb-1">GURU PENGGANTI (SUBSTITUTE) *</label>
+                <select 
+                  value={newSubSubNip} 
+                  onChange={(e) => setNewSubSubNip(e.target.value)}
+                  required
+                  className="w-full px-4 py-2.5 bg-[#0D0D19] border border-white/10 rounded-xl text-sm text-white focus:outline-none focus:border-amber-500 appearance-none"
+                >
+                  <option value="">-- Pilih Guru Pengganti --</option>
+                  {teachers
+                    .filter(t => t.nip !== newSubAbsentNip)
+                    .map(t => {
+                      const todayStr = new Date().toISOString().split('T')[0];
+                      const isPresent = records.some(r => r.nip === t.nip && r.type === 'datang' && r.date === todayStr);
+                      return (
+                        <option key={t.nip} value={t.nip}>
+                          {t.name} {isPresent ? '🟢 (Hadir di Sekolah)' : '⚪ (Belum Check-in)'}
+                        </option>
+                      );
+                    })}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-normal text-gray-400 mb-1">TUGAS / MATERI PEMBELAJARAN *</label>
+                <textarea 
+                  value={newSubTask} 
+                  onChange={(e) => setNewSubTask(e.target.value)} 
+                  placeholder="Instruksi tugas untuk siswa..." 
+                  required
+                  rows={3}
+                  className="w-full px-4 py-2.5 bg-white/5 rounded-xl text-sm border border-white/10 text-white focus:outline-none focus:border-amber-500 resize-none" 
+                />
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <button 
+                  type="button" 
+                  onClick={() => setShowAddSubstitutionModal(false)}
+                  className="flex-1 py-3 border border-white/5 bg-white/5 hover:bg-white/10 rounded-xl text-xs font-normal text-white transition-colors cursor-pointer"
+                >
+                  Batal
+                </button>
+                <button 
+                  type="submit" 
+                  className="flex-1 py-3 bg-amber-600 hover:bg-amber-500 rounded-xl text-xs font-semibold text-white transition-all shadow-lg shadow-amber-600/10 cursor-pointer"
+                >
+                  Buat Tugas & Kirim WA
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Lapor Penyelesaian Substitusi */}
+      {showReportSubModal && (
+        <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 z-[110] animate-[fadeIn_0.2s_ease-out]">
+          <div className="bg-[#0D0D19] border border-white/10 rounded-3xl p-6 w-full max-w-md relative shadow-2xl">
+            <button 
+              type="button"
+              onClick={() => {
+                setShowReportSubModal(false);
+                setReportingSubId(null);
+              }}
+              className="absolute top-4 right-4 text-gray-400 hover:text-white transition-colors cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+            <h5 className="font-normal text-white text-lg mb-2 flex items-center gap-2">
+              <Check className="w-5 h-5 text-emerald-400" />
+              Laporan Penyelesaian Kelas
+            </h5>
+            <p className="text-xs text-gray-400 mb-4">Silakan masukkan laporan singkat mengenai situasi kelas dan materi yang telah diselesaikan.</p>
+            <form onSubmit={handleReportSubstitution} className="space-y-4">
+              <div>
+                <label className="block text-xs font-normal text-gray-400 mb-1">CATATAN DAN LAPORAN KELAS *</label>
+                <textarea 
+                  value={reportSubNotes} 
+                  onChange={(e) => setReportSubNotes(e.target.value)} 
+                  placeholder="Contoh: Siswa kondusif, tugas LKS hal 25 telah dikerjakan lengkap..." 
+                  required
+                  rows={4}
+                  className="w-full px-4 py-2.5 bg-white/5 rounded-xl text-sm border border-white/10 text-white focus:outline-none focus:border-emerald-500 resize-none" 
+                />
+              </div>
+
+              <div className="flex gap-3">
+                <button 
+                  type="button" 
+                  onClick={() => {
+                    setShowReportSubModal(false);
+                    setReportingSubId(null);
+                  }}
+                  className="flex-1 py-3 border border-white/5 bg-white/5 hover:bg-white/10 rounded-xl text-xs font-normal text-white transition-colors cursor-pointer"
+                >
+                  Batal
+                </button>
+                <button 
+                  type="submit" 
+                  className="flex-1 py-3 bg-emerald-600 hover:bg-emerald-500 rounded-xl text-xs font-semibold text-white transition-all shadow-lg shadow-emerald-600/10 cursor-pointer"
+                >
+                  Kirim Laporan & Selesaikan
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Kelola Guru Piket Mingguan */}
+      {showEditPiketModal && editingPiketDay && (
+        <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 z-[110] animate-[fadeIn_0.2s_ease-out]">
+          <div className="bg-[#0D0D19] border border-white/10 rounded-3xl p-6 w-full max-w-md relative shadow-2xl max-h-[85vh] flex flex-col">
+            <button 
+              type="button"
+              onClick={() => {
+                setShowEditPiketModal(false);
+                setEditingPiketDay(null);
+              }}
+              className="absolute top-4 right-4 text-gray-400 hover:text-white transition-colors cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+            <h5 className="font-normal text-white text-lg mb-1 flex items-center gap-2">
+              <Shield className="w-5 h-5 text-amber-400" />
+              Kelola Guru Piket Hari {editingPiketDay.day}
+            </h5>
+            <p className="text-xs text-gray-400 mb-4">Centang pegawai/guru yang ditugaskan sebagai guru piket pada hari ini.</p>
+            
+            <div className="flex-1 overflow-y-auto space-y-2 pr-1 my-2">
+              {teachers.map((t: any) => {
+                const isSelected = editingPiketDay.teacherNips?.includes(t.nip);
+                return (
+                  <label 
+                    key={t.nip} 
+                    className={`flex items-center justify-between p-3 rounded-xl border transition-all cursor-pointer ${
+                      isSelected 
+                        ? 'bg-amber-500/10 border-amber-500/30 text-white' 
+                        : 'bg-white/5 border-transparent text-gray-300 hover:bg-white/10'
+                    }`}
+                  >
+                    <div className="flex flex-col">
+                      <span className="text-xs font-medium">{t.name}</span>
+                      <span className="text-[10px] text-gray-500">NIP: {t.nip} - {t.mapel || 'Staf'}</span>
+                    </div>
+                    <input 
+                      type="checkbox" 
+                      checked={isSelected}
+                      onChange={(e) => {
+                        const isChecked = e.target.checked;
+                        let updatedNips = [...(editingPiketDay.teacherNips || [])];
+                        if (isChecked) {
+                          if (!updatedNips.includes(t.nip)) {
+                            updatedNips.push(t.nip);
+                          }
+                        } else {
+                          updatedNips = updatedNips.filter((n: string) => n !== t.nip);
+                        }
+                        setEditingPiketDay({
+                          ...editingPiketDay,
+                          teacherNips: updatedNips
+                        });
+                      }}
+                      className="w-4 h-4 rounded text-amber-500 bg-[#0D0D19] border-white/10 focus:ring-amber-500/20 cursor-pointer"
+                    />
+                  </label>
+                );
+              })}
+            </div>
+
+            <div className="flex gap-3 pt-4 border-t border-white/5 mt-2">
+              <button 
+                type="button" 
+                onClick={() => {
+                  setShowEditPiketModal(false);
+                  setEditingPiketDay(null);
+                }}
+                className="flex-1 py-3 border border-white/5 bg-white/5 hover:bg-white/10 rounded-xl text-xs font-normal text-white transition-colors cursor-pointer"
+              >
+                Batal
+              </button>
+              <button 
+                type="button" 
+                onClick={() => handleSavePiketSchedule(editingPiketDay.id, editingPiketDay.teacherNips || [])}
+                className="flex-1 py-3 bg-amber-600 hover:bg-amber-500 rounded-xl text-xs font-semibold text-white transition-all shadow-lg shadow-amber-600/10 cursor-pointer"
+              >
+                Simpan Jadwal
               </button>
             </div>
           </div>

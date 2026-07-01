@@ -86,6 +86,41 @@
       },
       "required": ["id", "day", "time", "class", "subject"]
     },
+    "PiketSchedule": {
+      "title": "PiketSchedule",
+      "description": "Jadwal harian guru piket",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "day": { "type": "string" },
+        "teacherNips": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "required": ["id", "day", "teacherNips"]
+    },
+    "ClassSubstitution": {
+      "title": "ClassSubstitution",
+      "description": "Pencatatan substitusi guru kelas yang berhalangan hadir",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "date": { "type": "string" },
+        "class": { "type": "string" },
+        "subject": { "type": "string" },
+        "hours": { "type": "string" },
+        "absentTeacherNip": { "type": "string" },
+        "absentTeacherName": { "type": "string" },
+        "substituteTeacherNip": { "type": "string" },
+        "substituteTeacherName": { "type": "string" },
+        "taskDescription": { "type": "string" },
+        "status": { "type": "string" },
+        "notes": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "date", "class", "subject", "hours", "absentTeacherNip", "absentTeacherName", "substituteTeacherNip", "substituteTeacherName", "status"]
+    },
     "AttendanceRecord": {
       "title": "AttendanceRecord",
       "description": "Pencatatan presensi guru/staff",
@@ -127,6 +162,14 @@
     "teachingSchedule": {
       "schema": { "$ref": "#/entities/TeachingSchedule" },
       "description": "Koleksi jadwal mengajar"
+    },
+    "piketSchedule": {
+      "schema": { "$ref": "#/entities/PiketSchedule" },
+      "description": "Koleksi jadwal harian guru piket"
+    },
+    "classSubstitutions": {
+      "schema": { "$ref": "#/entities/ClassSubstitution" },
+      "description": "Koleksi pencatatan substitusi guru kelas yang berhalangan hadir"
     },
     "attendanceRecords": {
       "schema": { "$ref": "#/entities/AttendanceRecord" },

@@ -180,3 +180,55 @@ export async function saveSystemSettingsSync(settings: any): Promise<void> {
     console.error('Error saving system settings:', error);
   }
 }
+
+// 10. Piket Schedule Sync
+export async function getPiketScheduleSync(defaultSchedule: any[]): Promise<any[]> {
+  try {
+    const colRef = collection(db, 'piketSchedule');
+    const snapshot = await getDocs(colRef);
+    if (snapshot.empty) {
+      // If empty, let's seed it with the default schedule
+      for (const item of defaultSchedule) {
+        await setDoc(doc(db, 'piketSchedule', item.id), item);
+      }
+      return defaultSchedule;
+    } else {
+      const data: any[] = [];
+      snapshot.forEach((doc) => {
+        data.push(doc.data());
+      });
+      return data;
+    }
+  } catch (error) {
+    console.error('Error getting piket schedule:', error);
+    return defaultSchedule;
+  }
+}
+
+export async function savePiketScheduleSync(piketDay: any): Promise<void> {
+  await setDoc(doc(db, 'piketSchedule', piketDay.id), piketDay);
+}
+
+// 11. Class Substitution Sync
+export async function getClassSubstitutionsSync(): Promise<any[]> {
+  try {
+    const colRef = collection(db, 'classSubstitutions');
+    const snapshot = await getDocs(colRef);
+    const data: any[] = [];
+    snapshot.forEach((doc) => {
+      data.push(doc.data());
+    });
+    return data;
+  } catch (error) {
+    console.error('Error getting class substitutions:', error);
+    return [];
+  }
+}
+
+export async function saveClassSubstitutionSync(substitution: any): Promise<void> {
+  await setDoc(doc(db, 'classSubstitutions', substitution.id), substitution);
+}
+
+export async function deleteClassSubstitutionSync(id: string): Promise<void> {
+  await deleteDoc(doc(db, 'classSubstitutions', id));
+}
