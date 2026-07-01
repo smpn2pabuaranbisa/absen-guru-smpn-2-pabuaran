@@ -162,7 +162,7 @@ export async function getSystemSettingsSync(defaultSettings: any): Promise<any> 
     const docRef = doc(db, 'systemSettings', 'school');
     const docSnap = await getDoc(docRef);
     if (docSnap.exists()) {
-      return docSnap.data();
+      return { ...defaultSettings, ...docSnap.data() };
     } else {
       await setDoc(docRef, defaultSettings);
       return defaultSettings;

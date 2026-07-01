@@ -182,7 +182,17 @@ export default function App() {
     lateTolerance: 15,
     latitude: "-6.123456",
     longitude: "106.123456",
-    maxRadius: 100
+    maxRadius: 100,
+    waGatewayEnabled: false,
+    waGatewayProvider: "fonnte", // "fonnte" | "wablas" | "starsender"
+    waGatewayToken: "",
+    waGatewayDevice: "",
+    waAdminNumber: "",
+    waAdminNotificationsEnabled: false,
+    waTemplateDatang: "🔔 *NOTIFIKASI ABSENSI GURU*\n\nYth. Bapak/Ibu *{nama}*,\nAbsensi *DATANG* Anda telah berhasil terekam pada:\n📅 Tanggal: {tanggal}\n⏰ Waktu: {waktu}\n📍 Jarak: {jarak} meter dari koordinat sekolah\n\nStatus: Hadir / Tepat Waktu.\nTerima kasih atas dedikasi Anda hari ini!\n~ *{nama_sekolah}*",
+    waTemplatePulang: "🔔 *NOTIFIKASI ABSENSI GURU*\n\nYth. Bapak/Ibu *{nama}*,\nAbsensi *PULANG* Anda telah berhasil terekam pada:\n📅 Tanggal: {tanggal}\n⏰ Waktu: {waktu}\n\nSelamat beristirahat dan sampai jumpa esok hari!\n~ *{nama_sekolah}*",
+    waTemplateIzin: "🔔 *NOTIFIKASI PENGAJUAN IZIN*\n\nYth. Bapak/Ibu *{nama}*,\nPengajuan *{jenis_izin}* Anda telah berhasil diajukan pada:\n📅 Tanggal Pengisian: {tanggal} {waktu}\n📅 Periode Izin: {izin_mulai} s/d {izin_selesai}\n📝 Alasan: {alasan}\n⚡ Status: Pending (Menunggu Persetujuan Admin/Kepsek)\n\n~ *{nama_sekolah}*",
+    waTemplateAdmin: "📢 *LAPORAN ABSENSI PEGAWAI*\n\nNama Pegawai: *{nama}*\nNIP: {nip}\nAktivitas: *{aktivitas}*\nTanggal/Waktu: {tanggal} {waktu}\nDetail: {detail}\n~ *{nama_sekolah}*"
   });
   const [modalState, setModalState] = useState<{ show: boolean; type: typeof attendanceButtons[0] | null }>({ show: false, type: null });
   const [location, setLocation] = useState<string>('Mencari lokasi...');
@@ -620,6 +630,8 @@ export default function App() {
   const [newTeacherNip, setNewTeacherNip] = useState('');
   const [newTeacherMapel, setNewTeacherMapel] = useState('');
   const [newTeacherRole, setNewTeacherRole] = useState('Guru Mapel');
+  const [newTeacherPhone, setNewTeacherPhone] = useState('');
+  const [newTeacherEmail, setNewTeacherEmail] = useState('');
   const [newStudentName, setNewStudentName] = useState('');
   const [newStudentNis, setNewStudentNis] = useState('');
   const [newStudentKelas, setNewStudentKelas] = useState('');
@@ -1114,6 +1126,72 @@ export default function App() {
     } else {
       showNotification(`Berhasil mencatat: ${btn.label} untuk ${nama}`, btn.color);
     }
+
+    // Kirim notifikasi WhatsApp otomatis jika diaktifkan
+    if (schoolSettings.waGatewayEnabled && btn.id !== 'mengajar') {
+      const activeTeacher = teachers.find(t => t.nip === nip);
+      const recipientPhone = activeTeacher?.phone || '';
+
+      const replaceTemplateVariables = (template: string, vars: Record<string, string | number>) => {
+        let result = template;
+        Object.entries(vars).forEach(([key, value]) => {
+          result = result.split(`{${key}}`).join(String(value));
+        });
+        return result;
+      };
+
+      if (recipientPhone) {
+        let waMessage = '';
+        const commonVars = {
+          nama: nama,
+          nip: nip,
+          tanggal: formattedDate,
+          waktu: formattedTime,
+          nama_sekolah: schoolSettings.schoolName,
+          jarak: distance !== undefined ? Math.round(distance) : '-',
+          jenis_izin: izinType || '',
+          izin_mulai: izinMulai || '',
+          izin_selesai: izinSelesai || '',
+          alasan: izinAlasan || 'Tanpa keterangan'
+        };
+
+        if (btn.id === 'datang') {
+          const template = schoolSettings.waTemplateDatang || 
+            "🔔 *NOTIFIKASI ABSENSI GURU*\n\nYth. Bapak/Ibu *{nama}*,\nAbsensi *DATANG* Anda telah berhasil terekam pada:\n📅 Tanggal: {tanggal}\n⏰ Waktu: {waktu}\n📍 Jarak: {jarak} meter dari koordinat sekolah\n\nStatus: Hadir / Tepat Waktu.\nTerima kasih atas dedikasi Anda hari ini!\n~ *{nama_sekolah}*";
+          waMessage = replaceTemplateVariables(template, commonVars);
+        } else if (btn.id === 'pulang') {
+          const template = schoolSettings.waTemplatePulang ||
+            "🔔 *NOTIFIKASI ABSENSI GURU*\n\nYth. Bapak/Ibu *{nama}*,\nAbsensi *PULANG* Anda telah berhasil terekam pada:\n📅 Tanggal: {tanggal}\n⏰ Waktu: {waktu}\n\nSelamat beristirahat dan sampai jumpa esok hari!\n~ *${schoolSettings.schoolName}*";
+          waMessage = replaceTemplateVariables(template, commonVars);
+        } else if (btn.id === 'izin') {
+          const template = schoolSettings.waTemplateIzin ||
+            "🔔 *NOTIFIKASI PENGAJUAN IZIN*\n\nYth. Bapak/Ibu *{nama}*,\nPengajuan *{jenis_izin}* Anda telah berhasil diajukan pada:\n📅 Tanggal Pengisian: {tanggal} {waktu}\n📅 Periode Izin: {izin_mulai} s/d {izin_selesai}\n📝 Alasan: {alasan}\n⚡ Status: Pending (Menunggu Persetujuan Admin/Kepsek)\n\n~ *{nama_sekolah}*";
+          waMessage = replaceTemplateVariables(template, commonVars);
+        }
+
+        if (waMessage) {
+          sendWhatsAppNotification(recipientPhone, waMessage, true);
+        }
+      }
+
+      // Kirim salinan ke nomor WhatsApp Admin jika diaktifkan
+      if (schoolSettings.waAdminNotificationsEnabled && schoolSettings.waAdminNumber) {
+        const detailStr = btn.id === 'datang' ? `Jarak ${distance !== undefined ? Math.round(distance) : '-'}m` : '-';
+        const adminVars = {
+          nama: nama,
+          nip: nip,
+          aktivitas: recordType,
+          tanggal: formattedDate,
+          waktu: formattedTime,
+          detail: detailStr,
+          nama_sekolah: schoolSettings.schoolName
+        };
+        const template = schoolSettings.waTemplateAdmin ||
+          "📢 *LAPORAN ABSENSI PEGAWAI*\n\nNama Pegawai: *{nama}*\nNIP: {nip}\nAktivitas: *{aktivitas}*\nTanggal/Waktu: {tanggal} {waktu}\nDetail: {detail}\n~ *{nama_sekolah}*";
+        const adminMessage = replaceTemplateVariables(template, adminVars);
+        sendWhatsAppNotification(schoolSettings.waAdminNumber, adminMessage, true);
+      }
+    }
   };
 
   const handleFileUploadGuru = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1297,6 +1375,79 @@ export default function App() {
     setTimeout(() => {
       setNotification((prev) => ({ ...prev, show: false }));
     }, 3000);
+  };
+
+  const sendWhatsAppNotification = async (phoneNumber: string, message: string, silent: boolean = false) => {
+    if (!schoolSettings.waGatewayEnabled || !schoolSettings.waGatewayToken) {
+      console.log("WhatsApp Gateway is disabled or Token is missing.");
+      return false;
+    }
+
+    let cleanPhone = phoneNumber.trim().replace(/[^0-9]/g, '');
+    if (cleanPhone.startsWith('0')) {
+      cleanPhone = '62' + cleanPhone.slice(1);
+    } else if (cleanPhone.startsWith('8')) {
+      cleanPhone = '62' + cleanPhone;
+    }
+
+    if (!cleanPhone || cleanPhone.length < 9) {
+      console.warn("Invalid phone number format for WhatsApp");
+      if (!silent) showNotification("Format nomor telepon/WhatsApp tidak valid!", "text-rose-400");
+      return false;
+    }
+
+    try {
+      let url = '';
+      let headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+      let body: any = null;
+
+      if (schoolSettings.waGatewayProvider === 'fonnte') {
+        url = 'https://api.fonnte.com/send';
+        headers['Authorization'] = schoolSettings.waGatewayToken;
+        body = JSON.stringify({
+          target: cleanPhone,
+          message: message,
+        });
+      } else if (schoolSettings.waGatewayProvider === 'wablas') {
+        url = 'https://api.wablas.com/api/send-message';
+        headers['Authorization'] = schoolSettings.waGatewayToken;
+        body = JSON.stringify({
+          phone: cleanPhone,
+          message: message,
+        });
+      } else if (schoolSettings.waGatewayProvider === 'starsender') {
+        url = 'https://starsender.id/api/v2/send';
+        headers['Authorization'] = `Bearer ${schoolSettings.waGatewayToken}`;
+        body = JSON.stringify({
+          to: cleanPhone,
+          message: message,
+        });
+      }
+
+      if (url) {
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: headers,
+          body: body,
+        });
+        const result = await response.json();
+        console.log("WhatsApp Gateway Response:", result);
+        if (result.status === true || result.status === 'success' || result.status === 200 || result.status === 'pending' || result.status === 'sent') {
+          if (!silent) showNotification(`Notifikasi WhatsApp terkirim ke ${cleanPhone}!`, 'text-emerald-400');
+          return true;
+        } else {
+          if (!silent) showNotification(`Gateway WA: ${result.reason || result.message || 'Error'}`, 'text-amber-400');
+          return false;
+        }
+      }
+    } catch (error) {
+      console.error("Error sending WhatsApp notification:", error);
+      if (!silent) showNotification("Gagal menghubungi server WhatsApp Gateway.", "text-rose-400");
+      return false;
+    }
+    return false;
   };
 
   const getIcon = (name: string, className: string) => {
@@ -3805,6 +3956,215 @@ export default function App() {
                     </form>
                   </div>
 
+                  {/* WhatsApp Gateway & Otomatisasi Notifikasi */}
+                  <div className="bg-white/[0.02] border border-white/10 rounded-3xl p-6 md:p-8 lg:col-span-2 relative overflow-hidden">
+                    <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/[0.02] rounded-full blur-3xl"></div>
+                    <div className="flex items-center gap-4 mb-8">
+                      <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 flex items-center justify-center">
+                        <Phone className="w-6 h-6 text-emerald-400" />
+                      </div>
+                      <div>
+                        <h3 className="text-xl font-normal text-white">Integrasi WhatsApp Gateway</h3>
+                        <p className="text-sm text-gray-400 mt-1">Kirim notifikasi otomatis secara real-time ke WhatsApp guru dan admin.</p>
+                      </div>
+                    </div>
+
+                    <div className="space-y-6">
+                      <div className="flex items-center justify-between p-4 bg-white/[0.02] border border-white/5 rounded-2xl">
+                        <div>
+                          <p className="text-sm font-medium text-white">Aktifkan WhatsApp Gateway</p>
+                          <p className="text-xs text-gray-400 mt-0.5">Sistem akan otomatis mengirim pesan konfirmasi ketika guru absen atau izin.</p>
+                        </div>
+                        <label className="relative inline-flex items-center cursor-pointer">
+                          <input 
+                            type="checkbox" 
+                            checked={schoolSettings.waGatewayEnabled || false} 
+                            onChange={(e) => setSchoolSettings(prev => ({...prev, waGatewayEnabled: e.target.checked}))}
+                            className="sr-only peer" 
+                          />
+                          <div className="w-11 h-6 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-gray-300 after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-500 peer-checked:after:bg-white peer-checked:after:border-white"></div>
+                        </label>
+                      </div>
+
+                      {(schoolSettings.waGatewayEnabled || false) && (
+                        <div className="space-y-5 border-t border-white/5 pt-5">
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                            <div className="space-y-2">
+                              <label className="text-xs text-gray-400 ml-1">Penyedia Gateway (Provider)</label>
+                              <select 
+                                value={schoolSettings.waGatewayProvider || 'fonnte'}
+                                onChange={(e) => setSchoolSettings(prev => ({...prev, waGatewayProvider: e.target.value}))}
+                                className="w-full px-4 py-3 bg-[#05050A] border border-white/10 rounded-xl text-sm text-white outline-none focus:border-emerald-500/50 appearance-none"
+                              >
+                                <option value="fonnte">Fonnte (Rekomendasi - fonnte.com)</option>
+                                <option value="wablas">Wablas (wablas.com)</option>
+                                <option value="starsender">Starsender (starsender.id)</option>
+                              </select>
+                            </div>
+                            <div className="space-y-2">
+                              <label className="text-xs text-gray-400 ml-1">API Token / Auth Key</label>
+                              <input 
+                                type="text" 
+                                placeholder="Masukkan Token API Gateway Anda"
+                                value={schoolSettings.waGatewayToken || ''}
+                                onChange={(e) => setSchoolSettings(prev => ({...prev, waGatewayToken: e.target.value}))}
+                                className="w-full px-4 py-3 bg-[#05050A] border border-white/10 rounded-xl text-sm text-white outline-none focus:border-emerald-500/50"
+                              />
+                            </div>
+                          </div>
+
+                          <div className="border-t border-white/5 pt-5 space-y-4">
+                            <h4 className="text-sm font-medium text-white">Notifikasi Salinan Admin (Laporan Real-time)</h4>
+                            
+                            <div className="flex items-center justify-between p-4 bg-white/[0.01] border border-white/5 rounded-2xl">
+                              <div>
+                                <p className="text-xs font-medium text-white">Kirim Laporan Semua Kehadiran ke Nomor Admin</p>
+                                <p className="text-[11px] text-gray-400 mt-0.5">Setiap kali guru melakukan absen datang/pulang/mengajar, admin juga akan menerima laporannya.</p>
+                              </div>
+                              <label className="relative inline-flex items-center cursor-pointer">
+                                <input 
+                                  type="checkbox" 
+                                  checked={schoolSettings.waAdminNotificationsEnabled || false} 
+                                  onChange={(e) => setSchoolSettings(prev => ({...prev, waAdminNotificationsEnabled: e.target.checked}))}
+                                  className="sr-only peer" 
+                                />
+                                <div className="w-11 h-6 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-gray-300 after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-500 peer-checked:after:bg-white peer-checked:after:border-white"></div>
+                              </label>
+                            </div>
+
+                            {(schoolSettings.waAdminNotificationsEnabled || false) && (
+                              <div className="space-y-2">
+                                <label className="text-xs text-gray-400 ml-1">Nomor WhatsApp Admin</label>
+                                <input 
+                                  type="text" 
+                                  placeholder="Contoh: 08123456789"
+                                  value={schoolSettings.waAdminNumber || ''}
+                                  onChange={(e) => setSchoolSettings(prev => ({...prev, waAdminNumber: e.target.value}))}
+                                  className="w-full px-4 py-3 bg-[#05050A] border border-white/10 rounded-xl text-sm text-white outline-none focus:border-emerald-500/50"
+                                />
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="border-t border-white/5 pt-5 space-y-4">
+                            <div className="flex items-center gap-2">
+                              <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
+                              <h4 className="text-sm font-medium text-white">Kustomisasi Template Pesan WhatsApp</h4>
+                            </div>
+                            <p className="text-xs text-gray-400">Gunakan tag variabel di dalam kurung kurawal <code className="text-emerald-400 font-mono">{"{...}"}</code> agar informasi diisi secara otomatis.</p>
+                            
+                            <div className="space-y-4 pt-2">
+                              <div className="space-y-2">
+                                <div className="flex flex-col md:flex-row md:items-center justify-between gap-1">
+                                  <label className="text-xs text-gray-300 font-medium">Template Absen Datang (Guru)</label>
+                                  <span className="text-[10px] text-emerald-400 font-mono bg-emerald-500/5 px-2 py-0.5 rounded">Variabel: {"{nama}"}, {"{tanggal}"}, {"{waktu}"}, {"{jarak}"}, {"{nama_sekolah}"}</span>
+                                </div>
+                                <textarea
+                                  rows={4}
+                                  value={schoolSettings.waTemplateDatang || ''}
+                                  onChange={(e) => setSchoolSettings(prev => ({...prev, waTemplateDatang: e.target.value}))}
+                                  className="w-full px-4 py-3 bg-[#05050A] border border-white/10 rounded-xl text-xs text-gray-200 outline-none focus:border-emerald-500/50 font-mono leading-relaxed"
+                                  placeholder="Tulis format pesan untuk absen datang di sini..."
+                                />
+                              </div>
+
+                              <div className="space-y-2">
+                                <div className="flex flex-col md:flex-row md:items-center justify-between gap-1">
+                                  <label className="text-xs text-gray-300 font-medium">Template Absen Pulang (Guru)</label>
+                                  <span className="text-[10px] text-emerald-400 font-mono bg-emerald-500/5 px-2 py-0.5 rounded">Variabel: {"{nama}"}, {"{tanggal}"}, {"{waktu}"}, {"{nama_sekolah}"}</span>
+                                </div>
+                                <textarea
+                                  rows={4}
+                                  value={schoolSettings.waTemplatePulang || ''}
+                                  onChange={(e) => setSchoolSettings(prev => ({...prev, waTemplatePulang: e.target.value}))}
+                                  className="w-full px-4 py-3 bg-[#05050A] border border-white/10 rounded-xl text-xs text-gray-200 outline-none focus:border-emerald-500/50 font-mono leading-relaxed"
+                                  placeholder="Tulis format pesan untuk absen pulang di sini..."
+                                />
+                              </div>
+
+                              <div className="space-y-2">
+                                <div className="flex flex-col md:flex-row md:items-center justify-between gap-1">
+                                  <label className="text-xs text-gray-300 font-medium">Template Pengajuan Izin (Guru)</label>
+                                  <span className="text-[10px] text-emerald-400 font-mono bg-emerald-500/5 px-2 py-0.5 rounded">Variabel: {"{nama}"}, {"{jenis_izin}"}, {"{tanggal}"}, {"{waktu}"}, {"{izin_mulai}"}, {"{izin_selesai}"}, {"{alasan}"}, {"{nama_sekolah}"}</span>
+                                </div>
+                                <textarea
+                                  rows={5}
+                                  value={schoolSettings.waTemplateIzin || ''}
+                                  onChange={(e) => setSchoolSettings(prev => ({...prev, waTemplateIzin: e.target.value}))}
+                                  className="w-full px-4 py-3 bg-[#05050A] border border-white/10 rounded-xl text-xs text-gray-200 outline-none focus:border-emerald-500/50 font-mono leading-relaxed"
+                                  placeholder="Tulis format pesan untuk pengajuan izin di sini..."
+                                />
+                              </div>
+
+                              <div className="space-y-2">
+                                <div className="flex flex-col md:flex-row md:items-center justify-between gap-1">
+                                  <label className="text-xs text-gray-300 font-medium">Template Salinan Kehadiran (Admin)</label>
+                                  <span className="text-[10px] text-emerald-400 font-mono bg-emerald-500/5 px-2 py-0.5 rounded">Variabel: {"{nama}"}, {"{nip}"}, {"{aktivitas}"}, {"{tanggal}"}, {"{waktu}"}, {"{detail}"}, {"{nama_sekolah}"}</span>
+                                </div>
+                                <textarea
+                                  rows={4}
+                                  value={schoolSettings.waTemplateAdmin || ''}
+                                  onChange={(e) => setSchoolSettings(prev => ({...prev, waTemplateAdmin: e.target.value}))}
+                                  className="w-full px-4 py-3 bg-[#05050A] border border-white/10 rounded-xl text-xs text-gray-200 outline-none focus:border-emerald-500/50 font-mono leading-relaxed"
+                                  placeholder="Tulis format pesan untuk salinan admin di sini..."
+                                />
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Uji Coba Kirim WA */}
+                          <div className="bg-emerald-500/5 border border-emerald-500/10 rounded-2xl p-4 mt-4 space-y-3">
+                            <h5 className="text-xs font-medium text-emerald-400">Uji Coba Pengiriman Notifikasi</h5>
+                            <p className="text-[11px] text-gray-400">Masukkan nomor WhatsApp aktif Anda untuk menguji apakah integrasi gateway sudah terhubung dengan benar.</p>
+                            <div className="flex gap-2">
+                              <input 
+                                id="testWaNumberInput"
+                                type="text" 
+                                placeholder="Contoh: 08123456789"
+                                className="flex-1 px-3 py-2 bg-[#05050A] border border-white/10 rounded-xl text-xs text-white outline-none focus:border-emerald-500/50"
+                              />
+                              <button 
+                                type="button"
+                                onClick={async () => {
+                                  const numInput = document.getElementById('testWaNumberInput') as HTMLInputElement;
+                                  const num = numInput?.value?.trim();
+                                  if (!num) {
+                                    showNotification('Masukkan nomor untuk tes!', 'text-amber-400');
+                                    return;
+                                  }
+                                  showNotification('Sedang mengirim tes...', 'text-white');
+                                  const textMsg = `🧪 *TES KONEKSI GATEWAY WHATSAPP*\n\n` +
+                                    `Halo! Notifikasi ini dikirim dari Aplikasi Absensi *${schoolSettings.schoolName}*.\n` +
+                                    `Koneksi dengan server WhatsApp Gateway (${(schoolSettings.waGatewayProvider || 'fonnte').toUpperCase()}) berhasil terhubung dengan sukses!\n\n` +
+                                    `Waktu Tes: ${new Date().toLocaleTimeString('id-ID')}`;
+                                  const ok = await sendWhatsAppNotification(num, textMsg);
+                                  if (ok) {
+                                    showNotification('Pesan uji coba berhasil dikirim!', 'text-emerald-400');
+                                  }
+                                }}
+                                className="px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-black rounded-xl text-xs font-medium cursor-pointer transition-colors"
+                              >
+                                Kirim Tes WA
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="pt-2">
+                        <button 
+                          onClick={() => {
+                            saveSystemSettingsSync(schoolSettings);
+                            showNotification('Pengaturan WhatsApp Gateway berhasil disimpan!', 'text-emerald-400');
+                          }}
+                          className="w-full py-3.5 bg-emerald-500/10 text-emerald-400 font-medium rounded-xl hover:bg-emerald-500/20 border border-emerald-500/20 transition-colors cursor-pointer"
+                        >
+                          Simpan Konfigurasi WhatsApp
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
                   {/* Pembersihan & Manajemen Data */}
                   <div className="bg-white/[0.02] border border-white/10 rounded-3xl p-6 md:p-8 lg:col-span-2 relative overflow-hidden">
                     <div className="absolute top-0 right-0 w-32 h-32 bg-rose-500/[0.02] rounded-full blur-3xl"></div>
@@ -4562,13 +4922,29 @@ export default function App() {
                 <label className="block text-xs font-normal text-gray-400 mb-1">BIDANG TUGAS / MAPEL</label>
                 <input type="text" value={newTeacherMapel} onChange={(e) => setNewTeacherMapel(e.target.value)} placeholder="Contoh: Matematika / Administrasi" className="w-full px-4 py-2.5 bg-white/5 rounded-xl text-sm border border-white/10 text-white focus:outline-none focus:border-emerald-500" />
               </div>
+              <div>
+                <label className="block text-xs font-normal text-gray-400 mb-1">TELEPON / WHATSAPP</label>
+                <input type="text" value={newTeacherPhone} onChange={(e) => setNewTeacherPhone(e.target.value)} placeholder="Contoh: 08123456789" className="w-full px-4 py-2.5 bg-white/5 rounded-xl text-sm border border-white/10 text-white focus:outline-none focus:border-emerald-500" />
+              </div>
+              <div>
+                <label className="block text-xs font-normal text-gray-400 mb-1">EMAIL RESMI</label>
+                <input type="email" value={newTeacherEmail} onChange={(e) => setNewTeacherEmail(e.target.value)} placeholder="Contoh: nama@sekolah.sch.id" className="w-full px-4 py-2.5 bg-white/5 rounded-xl text-sm border border-white/10 text-white focus:outline-none focus:border-emerald-500" />
+              </div>
             </div>
             <div className="flex justify-end gap-3 mt-6">
               <button onClick={() => setShowAddTeacherModal(false)} className="px-4 py-2 text-gray-400 hover:text-white text-xs font-normal cursor-pointer">Batal</button>
               <button
                 onClick={() => {
                   if (!newTeacherName || !newTeacherNip) return;
-                  const newTeacher = { name: newTeacherName, nip: newTeacherNip, role: newTeacherRole, mapel: newTeacherMapel || 'Umum', status: 'Aktif' };
+                  const newTeacher = { 
+                    name: newTeacherName, 
+                    nip: newTeacherNip, 
+                    role: newTeacherRole, 
+                    mapel: newTeacherMapel || 'Umum', 
+                    phone: newTeacherPhone || '',
+                    email: newTeacherEmail || '',
+                    status: 'Aktif' 
+                  };
                   setTeachers(prev => [newTeacher, ...prev]);
                   saveTeacherSync(newTeacher);
                   showNotification(`Pegawai ${newTeacherName} berhasil didaftarkan!`, 'text-emerald-400');
@@ -4576,6 +4952,8 @@ export default function App() {
                   setNewTeacherNip('');
                   setNewTeacherMapel('');
                   setNewTeacherRole('Guru Mapel');
+                  setNewTeacherPhone('');
+                  setNewTeacherEmail('');
                   setShowAddTeacherModal(false);
                 }}
                 className="px-4 py-2 bg-emerald-500 text-black rounded-lg text-xs font-normal cursor-pointer"
@@ -4683,13 +5061,33 @@ export default function App() {
                   className="w-full px-4 py-2.5 bg-white/5 rounded-xl text-sm border border-white/10 text-white focus:outline-none focus:border-emerald-500" 
                 />
               </div>
+              <div>
+                <label className="block text-xs font-normal text-gray-400 mb-1">TELEPON / WHATSAPP</label>
+                <input 
+                  type="text" 
+                  value={editingTeacher.phone || ''} 
+                  onChange={(e) => setEditingTeacher({...editingTeacher, phone: e.target.value})} 
+                  placeholder="Contoh: 08123456789" 
+                  className="w-full px-4 py-2.5 bg-white/5 rounded-xl text-sm border border-white/10 text-white focus:outline-none focus:border-emerald-500" 
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-normal text-gray-400 mb-1">EMAIL RESMI</label>
+                <input 
+                  type="email" 
+                  value={editingTeacher.email || ''} 
+                  onChange={(e) => setEditingTeacher({...editingTeacher, email: e.target.value})} 
+                  placeholder="Contoh: nama@sekolah.sch.id" 
+                  className="w-full px-4 py-2.5 bg-white/5 rounded-xl text-sm border border-white/10 text-white focus:outline-none focus:border-emerald-500" 
+                />
+              </div>
             </div>
             <div className="flex justify-end gap-3 mt-6">
               <button onClick={() => { setShowEditTeacherModal(false); setEditingTeacher(null); }} className="px-4 py-2 text-gray-400 hover:text-white text-xs font-normal cursor-pointer">Batal</button>
               <button
                 onClick={() => {
                   if (!editingTeacher.name) return;
-                  setTeachers(prev => prev.map(t => t.nip === editingTeacher.nip ? editingTeacher : t));
+                  setTeachers(prev => prev.map(t => t.nip === editingTeacher.nip ? { ...t, ...editingTeacher } : t));
                   saveTeacherSync(editingTeacher);
                   showNotification(`Data Pegawai ${editingTeacher.name} berhasil diperbarui!`, 'text-emerald-400');
                   setShowEditTeacherModal(false);
