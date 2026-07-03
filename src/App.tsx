@@ -99,6 +99,9 @@ export default function App() {
   const [newHolidayName, setNewHolidayName] = useState('');
 
   const [teachingSessionsToday, setTeachingSessionsToday] = useState<{id: string, name: string, nip: string, mapel: string, kelas: string, jam: string, status: string, timeStarted: string, timeEnded: string}[]>([]);
+  const [teacherSearchQuery, setTeacherSearchQuery] = useState('');
+  const [teacherStatusFilter, setTeacherStatusFilter] = useState<'semua' | 'hadir' | 'belum' | 'izin'>('semua');
+  const [selectedPhotoUrl, setSelectedPhotoUrl] = useState<string | null>(null);
 
   const [izinRequests, setIzinRequests] = useState<{id: string, name: string, nip: string, tipe: string, tanggalMulai: string, tanggalSelesai: string, alasan: string, status: string, attachment: string | null}[]>([]);
 
@@ -229,24 +232,40 @@ export default function App() {
   const [userJabatan, setUserJabatan] = useState('');
   const isTeacherRole = userRole === 'admin' || (userJabatan === 'Guru Mapel' || userJabatan === 'Wakasek Kurikulum' || userJabatan === 'Kepala Sekolah');
   const [jamMulai, setJamMulai] = useState(() => {
+    const saved = localStorage.getItem('jamMulai');
+    if (saved) return saved;
     const now = new Date();
     const h = now.getHours();
     return `${String(h).padStart(2, '0')}.00`;
   });
   const [jamSelesai, setJamSelesai] = useState(() => {
+    const saved = localStorage.getItem('jamSelesai');
+    if (saved) return saved;
     const now = new Date();
     const h = (now.getHours() + 2) % 24;
     return `${String(h).padStart(2, '0')}.00`;
   });
-  const [ruangKelas, setRuangKelas] = useState('');
-  const [mataPelajaran, setMataPelajaran] = useState('');
-  const [isSesiMengajarAktif, setIsSesiMengajarAktif] = useState(true);
+  const [ruangKelas, setRuangKelas] = useState(() => localStorage.getItem('ruangKelas') || '');
+  const [mataPelajaran, setMataPelajaran] = useState(() => localStorage.getItem('mataPelajaran') || '');
+  const [isSesiMengajarAktif, setIsSesiMengajarAktif] = useState(() => {
+    return localStorage.getItem('isSesiMengajarAktif') === 'true';
+  });
+  const [sesiMengajarTanggal, setSesiMengajarTanggal] = useState(() => {
+    return localStorage.getItem('sesiMengajarTanggal') || '';
+  });
   const [filterClassOnly, setFilterClassOnly] = useState(true);
 
   const isSessionTimeActive = () => {
     if (!isSesiMengajarAktif) return false;
+    
+    // Check if the session was started today
+    const now = currentTime;
+    const formattedDate = now.toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' });
+    if (sesiMengajarTanggal && sesiMengajarTanggal !== formattedDate) {
+      return false;
+    }
+    
     try {
-      const now = currentTime;
       const currentHour = now.getHours();
       const currentMin = now.getMinutes();
 
@@ -280,6 +299,57 @@ export default function App() {
       return true;
     }
   };
+
+  // Automatically end teaching session when time runs out or day changes
+  useEffect(() => {
+    if (isSesiMengajarAktif) {
+      const checkActive = () => {
+        const now = currentTime;
+        const formattedDate = now.toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' });
+        if (sesiMengajarTanggal && sesiMengajarTanggal !== formattedDate) {
+          return false;
+        }
+        try {
+          const currentHour = now.getHours();
+          const currentMin = now.getMinutes();
+
+          const cleanJamSelesai = jamSelesai.replace(':', '.');
+          const [endHourStr, endMinStr] = cleanJamSelesai.split('.');
+          const endHour = parseInt(endHourStr, 10);
+          const endMin = parseInt(endMinStr, 10);
+
+          if (isNaN(endHour) || isNaN(endMin)) return true;
+
+          if (currentHour > endHour) {
+            return false;
+          } else if (currentHour === endHour && currentMin >= endMin) {
+            return false;
+          }
+
+          const cleanJamMulai = jamMulai.replace(':', '.');
+          const [startHourStr, startMinStr] = cleanJamMulai.split('.');
+          const startHour = parseInt(startHourStr, 10);
+          const startMin = parseInt(startMinStr, 10);
+          if (!isNaN(startHour) && !isNaN(startMin)) {
+            if (currentHour < startHour) {
+              return false;
+            } else if (currentHour === startHour && currentMin < startMin) {
+              return false;
+            }
+          }
+
+          return true;
+        } catch (e) {
+          return true;
+        }
+      };
+
+      if (!checkActive()) {
+        setIsSesiMengajarAktif(false);
+        localStorage.setItem('isSesiMengajarAktif', 'false');
+      }
+    }
+  }, [currentTime, isSesiMengajarAktif, sesiMengajarTanggal, jamMulai, jamSelesai]);
   const [izinType, setIzinType] = useState<'Izin' | 'Sakit' | 'Dinas'>('Izin');
   const [izinMulai, setIzinMulai] = useState('');
   const [izinSelesai, setIzinSelesai] = useState('');
@@ -296,6 +366,46 @@ export default function App() {
   const [selectedClassAttendance, setSelectedClassAttendance] = useState('VII A');
   const [attendanceDate, setAttendanceDate] = useState('2026-06-27');
   const [searchAttendanceSiswaQuery, setSearchAttendanceSiswaQuery] = useState('');
+  const [selectedSessionFilter, setSelectedSessionFilter] = useState<string>('all');
+
+  useEffect(() => {
+    setSelectedSessionFilter('all');
+  }, [selectedClassAttendance, attendanceDate]);
+
+  const classSessionsOnDate = useMemo(() => {
+    const normalizeClass = (c: string) => (c || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const targetClassNorm = normalizeClass(selectedClassAttendance);
+    
+    return teachingSessionsToday.filter(session => {
+      const sessionDate = session.date;
+      
+      const formatToYYYYMMDD = (dStr: string) => {
+        try {
+          if (!dStr) return '';
+          if (dStr.includes('-')) return dStr;
+          const parts = dStr.split(' ');
+          if (parts.length === 3) {
+            const day = parts[0].padStart(2, '0');
+            const months: {[key: string]: string} = {
+              'Jan': '01', 'Feb': '02', 'Mar': '03', 'Apr': '04', 'May': '05', 'Jun': '06',
+              'Jul': '07', 'Aug': '08', 'Sep': '09', 'Oct': '10', 'Nov': '11', 'Dec': '12',
+              'Januari': '01', 'Februari': '02', 'Maret': '03', 'April': '04', 'Mei': '05', 'Juni': '06',
+              'Juli': '07', 'Agustus': '08', 'September': '09', 'Okt': '10', 'November': '11', 'Desember': '12'
+            };
+            const month = months[parts[1]] || '01';
+            const year = parts[2];
+            return `${year}-${month}-${day}`;
+          }
+          return dStr;
+        } catch {
+          return dStr;
+        }
+      };
+
+      const normalizedSessionDate = formatToYYYYMMDD(sessionDate || '');
+      return normalizeClass(session.kelas) === targetClassNorm && normalizedSessionDate === attendanceDate;
+    });
+  }, [teachingSessionsToday, selectedClassAttendance, attendanceDate]);
 
   const classStudents = useMemo(() => {
     const normalizeClass = (c: string) => (c || '').toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -313,7 +423,54 @@ export default function App() {
     }
     
     return registeredInClass.map(student => {
-      const record = studentRecords.find(r => r.nis === student.nis);
+      const record = studentRecords.find(r => {
+        const isNisMatch = r.nis === student.nis;
+        const recordDate = r.date || '2026-06-27';
+        const isDateMatch = recordDate === attendanceDate;
+        
+        const isSessionMatch = selectedSessionFilter === 'all'
+          ? !r.sessionId
+          : r.sessionId === selectedSessionFilter;
+          
+        return isNisMatch && isDateMatch && isSessionMatch;
+      });
+      
+      return {
+        name: student.name,
+        nis: student.nis,
+        kelas: student.kelas,
+        status: record ? record.status : 'Alpa',
+        time: record ? record.time : '-',
+        sessionId: record ? record.sessionId : '',
+        mapel: record ? record.mapel : '',
+        guru: record ? record.guru : ''
+      };
+    });
+  }, [students, studentRecords, selectedClassAttendance, searchAttendanceSiswaQuery, attendanceDate, selectedSessionFilter]);
+
+  const activeSessionStudents = useMemo(() => {
+    if (!isSesiMengajarAktif) return [];
+    const normalizeClass = (c: string) => (c || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const activeClassNormalized = normalizeClass(ruangKelas);
+    
+    let registeredInClass = students.filter(s => normalizeClass(s.kelas) === activeClassNormalized);
+    
+    const activeSession = teachingSessionsToday.find(s => 
+      s.nip === nip && 
+      s.kelas === ruangKelas && 
+      s.mapel === mataPelajaran &&
+      s.status === 'Mengajar'
+    );
+    const activeSessionId = activeSession ? activeSession.id : 'default';
+
+    const nowStr = new Date().toLocaleDateString('en-CA');
+
+    return registeredInClass.map(student => {
+      const record = studentRecords.find(r => 
+        r.nis === student.nis && 
+        r.sessionId === activeSessionId &&
+        (r.date === nowStr || !r.date)
+      );
       return {
         name: student.name,
         nis: student.nis,
@@ -322,7 +479,7 @@ export default function App() {
         time: record ? record.time : '-'
       };
     });
-  }, [students, studentRecords, selectedClassAttendance, searchAttendanceSiswaQuery]);
+  }, [students, studentRecords, isSesiMengajarAktif, ruangKelas, mataPelajaran, teachingSessionsToday, nip]);
 
   const currentClassAttendanceSummary = useMemo(() => {
     let present = 0;
@@ -421,6 +578,94 @@ export default function App() {
     );
   }, [records]);
 
+  const mappedTeachersToday = useMemo(() => {
+    const todayStrID = new Date().toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' });
+    const todayStrEN = new Date().toLocaleDateString('en-CA');
+    
+    return teachers.map(teacher => {
+      const teacherRecords = records.filter(r => 
+        r.nip === teacher.nip && 
+        (r.date === todayStrID || r.date === todayStrEN)
+      );
+      
+      const datangRec = teacherRecords.find(r => r.type === 'Absen Datang');
+      const pulangRec = teacherRecords.find(r => r.type === 'Absen Pulang');
+      const izinRec = teacherRecords.find(r => ['Izin', 'Sakit', 'Dinas'].includes(r.type));
+      
+      const approvedIzin = izinRequests.find(req => 
+        req.nip === teacher.nip && 
+        req.status === 'Disetujui'
+      );
+
+      let statusType: 'belum' | 'hadir' | 'pulang' | 'izin' = 'belum';
+      let statusLabel = 'Belum Absen';
+      let recordTime = '-';
+      let recordStatus = '';
+      let photo: string | null = null;
+      let distance: number | undefined = undefined;
+
+      if (pulangRec) {
+        statusType = 'pulang';
+        statusLabel = 'Sudah Pulang';
+        recordTime = pulangRec.time;
+        photo = pulangRec.photo || null;
+      } else if (datangRec) {
+        statusType = 'hadir';
+        statusLabel = 'Hadir';
+        recordTime = datangRec.time;
+        photo = datangRec.photo || null;
+        distance = datangRec.distance;
+        
+        const [limitHour, limitMinute] = (schoolSettings.entryLimit || "07:00").split(':').map(Number);
+        const timeParts = datangRec.time ? datangRec.time.split(/[:.]/) : [];
+        const hour = timeParts[0] ? parseInt(timeParts[0]) : 0;
+        const minute = timeParts[1] ? parseInt(timeParts[1]) : 0;
+        if (hour > limitHour || (hour === limitHour && minute > limitMinute)) {
+          recordStatus = 'Terlambat';
+        } else {
+          recordStatus = 'Tepat Waktu';
+        }
+      } else if (izinRec || approvedIzin) {
+        statusType = 'izin';
+        statusLabel = izinRec ? izinRec.type : (approvedIzin ? approvedIzin.tipe : 'Izin');
+        recordTime = izinRec ? izinRec.time : 'Disetujui';
+      }
+
+      return {
+        ...teacher,
+        statusType,
+        statusLabel,
+        recordTime,
+        recordStatus,
+        photo,
+        distance
+      };
+    });
+  }, [teachers, records, izinRequests, schoolSettings.entryLimit]);
+
+  const filteredTeachersToday = useMemo(() => {
+    return mappedTeachersToday.filter(teacher => {
+      const nameMatch = teacher.name.toLowerCase().includes(teacherSearchQuery.toLowerCase()) || 
+                        teacher.nip.includes(teacherSearchQuery);
+                        
+      if (!nameMatch) return false;
+      
+      if (teacherStatusFilter === 'semua') return true;
+      if (teacherStatusFilter === 'hadir') return teacher.statusType === 'hadir' || teacher.statusType === 'pulang';
+      if (teacherStatusFilter === 'belum') return teacher.statusType === 'belum';
+      if (teacherStatusFilter === 'izin') return teacher.statusType === 'izin';
+      return true;
+    });
+  }, [mappedTeachersToday, teacherSearchQuery, teacherStatusFilter]);
+
+  const filteredTeachingSessionsToday = useMemo(() => {
+    const todayStrID = new Date().toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' });
+    const todayStrEN = new Date().toLocaleDateString('en-CA');
+    return teachingSessionsToday.filter(session => 
+      session.date === todayStrID || session.date === todayStrEN
+    );
+  }, [teachingSessionsToday]);
+
   const getPlaceSignature = () => {
     const name = schoolSettings.schoolName;
     const addr = schoolSettings.schoolAddress;
@@ -440,10 +685,15 @@ export default function App() {
     doc.setFontSize(16);
     doc.text(`Laporan Absensi Kelas ${selectedClassAttendance}`, 14, 22);
     
-    doc.setFontSize(11);
-    doc.text(`Tanggal: ${attendanceDate}`, 14, 30);
-    doc.text(`Dicetak pada: ${new Date().toLocaleString()}`, 14, 36);
+    const activeSessionObj = classSessionsOnDate.find(s => s.id === selectedSessionFilter);
+    const sessionText = activeSessionObj 
+      ? ` | Sesi Pelajaran: ${activeSessionObj.mapel} (${activeSessionObj.name})` 
+      : ' | Sesi Pelajaran: Presensi Harian / Barcode';
 
+    doc.setFontSize(11);
+    doc.text(`Tanggal: ${attendanceDate}${sessionText}`, 14, 30);
+    doc.text(`Dicetak pada: ${new Date().toLocaleString()}`, 14, 36);
+ 
     const summary = currentClassAttendanceSummary;
     if (summary) {
       doc.text(`Hadir: ${summary.present} | Alpa: ${summary.absent} | Sakit: ${summary.sick} | Izin: ${summary.permission}`, 14, 44);
@@ -457,7 +707,7 @@ export default function App() {
       student.status,
       student.status === 'Hadir' ? student.time : '-'
     ]);
-
+ 
     autoTable(doc, {
       head: [tableColumn],
       body: tableRows,
@@ -465,17 +715,19 @@ export default function App() {
       theme: 'grid',
       headStyles: { fillColor: [16, 185, 129] }
     });
-
+ 
     const finalY1 = (doc as any).lastAutoTable.finalY || 100;
     doc.text(`${getPlaceSignature()}, ${new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}`, 130, finalY1 + 20);
     doc.text('Kepala Sekolah', 130, finalY1 + 28);
     doc.text(schoolSettings.headmasterName, 130, finalY1 + 50);
     doc.text(`NIP. ${schoolSettings.headmasterNip}`, 130, finalY1 + 56);
-
-    doc.save(`Rekap_Absensi_${selectedClassAttendance}_${attendanceDate}.pdf`);
+ 
+    const sessionNameClean = activeSessionObj ? `_Sesi_${activeSessionObj.mapel.replace(/\s+/g, '_')}` : '';
+    doc.save(`Rekap_Absensi_${selectedClassAttendance}_${attendanceDate}${sessionNameClean}.pdf`);
   };
-
+ 
   const handleExportExcel = () => {
+    const activeSessionObj = classSessionsOnDate.find(s => s.id === selectedSessionFilter);
     const headers = ['No', 'NIS', 'Nama Siswa', 'Status', 'Waktu Absen'];
     const csvRows = [];
     
@@ -496,8 +748,9 @@ export default function App() {
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     const url = URL.createObjectURL(blob);
+    const sessionNameClean = activeSessionObj ? `_Sesi_${activeSessionObj.mapel.replace(/\s+/g, '_')}` : '';
     link.setAttribute('href', url);
-    link.setAttribute('download', `Rekap_Absensi_${selectedClassAttendance}_${attendanceDate}.csv`);
+    link.setAttribute('download', `Rekap_Absensi_${selectedClassAttendance}_${attendanceDate}${sessionNameClean}.csv`);
     link.style.visibility = 'hidden';
     document.body.appendChild(link);
     link.click();
@@ -663,6 +916,8 @@ export default function App() {
   const [newStudentNis, setNewStudentNis] = useState('');
   const [newStudentKelas, setNewStudentKelas] = useState('');
   const [exportTeacherMonth, setExportTeacherMonth] = useState('06-2026');
+  const [exportStudentClass, setExportStudentClass] = useState('all');
+  const [exportStudentMonth, setExportStudentMonth] = useState('06-2026');
   const [showAddTeacherModal, setShowAddTeacherModal] = useState(false);
   const [showAddStudentModal, setShowAddStudentModal] = useState(false);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
@@ -675,6 +930,8 @@ export default function App() {
   const [editingStudent, setEditingStudent] = useState<any>(null);
   const [showEditTeacherModal, setShowEditTeacherModal] = useState(false);
   const [showEditStudentModal, setShowEditStudentModal] = useState(false);
+  const [teacherToDelete, setTeacherToDelete] = useState<any>(null);
+  const [studentToDelete, setStudentToDelete] = useState<any>(null);
   
   const [showEditProfileModal, setShowEditProfileModal] = useState(false);
   const [editingProfileData, setEditingProfileData] = useState<any>(null);
@@ -882,36 +1139,117 @@ export default function App() {
     }
   };
 
-  const handleUpdateStudentStatus = (nis: string, studentName: string, studentKelas: string, newStatus: string) => {
+  const handleUpdateStudentStatus = (
+    nis: string, 
+    studentName: string, 
+    studentKelas: string, 
+    newStatus: string,
+    sessionId: string = '',
+    mapel: string = '',
+    guru: string = ''
+  ) => {
     const now = new Date();
     const recordTimeStr = now.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
-    // Find if record already exists
-    const existingIndex = studentRecords.findIndex(r => r.nis === nis);
+    let targetDate = attendanceDate;
+    if (sessionId) {
+      const sess = teachingSessionsToday.find(s => s.id === sessionId);
+      if (sess && sess.date) {
+        const formatToYYYYMMDD = (dStr: string) => {
+          try {
+            if (!dStr) return '';
+            if (dStr.includes('-')) return dStr;
+            const parts = dStr.split(' ');
+            if (parts.length === 3) {
+              const day = parts[0].padStart(2, '0');
+              const months: {[key: string]: string} = {
+                'Jan': '01', 'Feb': '02', 'Mar': '03', 'Apr': '04', 'May': '05', 'Jun': '06',
+                'Jul': '07', 'Aug': '08', 'Sep': '09', 'Oct': '10', 'Nov': '11', 'Dec': '12',
+                'Januari': '01', 'Februari': '02', 'Maret': '03', 'April': '04', 'Mei': '05', 'Juni': '06',
+                'Juli': '07', 'Agustus': '08', 'September': '09', 'Okt': '10', 'November': '11', 'Desember': '12'
+              };
+              const month = months[parts[1]] || '01';
+              const year = parts[2];
+              return `${year}-${month}-${day}`;
+            }
+            return dStr;
+          } catch {
+            return dStr;
+          }
+        };
+        targetDate = formatToYYYYMMDD(sess.date);
+      } else {
+        targetDate = now.toLocaleDateString('en-CA');
+      }
+    }
+
+    const existingIndex = studentRecords.findIndex(r => {
+      const isNisMatch = r.nis === nis;
+      const rDate = r.date || '2026-06-27';
+      const isDateMatch = rDate === targetDate;
+      const isSessionMatch = (r.sessionId || '') === (sessionId || '');
+      return isNisMatch && isDateMatch && isSessionMatch;
+    });
 
     if (existingIndex >= 0) {
       const updatedRecords = [...studentRecords];
       const updatedRec = {
         ...updatedRecords[existingIndex],
         status: newStatus,
-        time: newStatus === 'Hadir' ? recordTimeStr : '-'
+        time: newStatus === 'Hadir' ? recordTimeStr : '-',
+        sessionId: sessionId || '',
+        mapel: mapel || '',
+        guru: guru || '',
+        date: targetDate
       };
       updatedRecords[existingIndex] = updatedRec;
       setStudentRecords(updatedRecords);
       saveStudentRecordSync(updatedRec);
     } else {
       const newRec = {
-        id: Math.random().toString(36).substr(2, 9),
+        id: 'sr_' + Math.random().toString(36).substr(2, 9),
         name: studentName,
         nis: nis,
         kelas: studentKelas,
         time: newStatus === 'Hadir' ? recordTimeStr : '-',
-        status: newStatus
+        status: newStatus,
+        sessionId: sessionId || '',
+        mapel: mapel || '',
+        guru: guru || '',
+        date: targetDate
       };
       setStudentRecords(prev => [newRec, ...prev]);
       saveStudentRecordSync(newRec);
     }
     showNotification(`Status kehadiran ${studentName} diubah menjadi ${newStatus}`, 'text-emerald-400');
+  };
+
+  const handleEndTeachingSession = () => {
+    setIsSesiMengajarAktif(false);
+    localStorage.setItem('isSesiMengajarAktif', 'false');
+    
+    const activeSessionIndex = teachingSessionsToday.findIndex(s => 
+      s.nip === nip && 
+      s.kelas === ruangKelas && 
+      s.mapel === mataPelajaran &&
+      s.status === 'Mengajar'
+    );
+    
+    if (activeSessionIndex >= 0) {
+      const now = new Date();
+      const formattedTime = now.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+      const updatedSessions = [...teachingSessionsToday];
+      const updatedSess = {
+        ...updatedSessions[activeSessionIndex],
+        status: 'Selesai',
+        timeEnded: formattedTime
+      };
+      updatedSessions[activeSessionIndex] = updatedSess;
+      setTeachingSessionsToday(updatedSessions);
+      saveTeachingSessionSync(updatedSess);
+    }
+    
+    showNotification('Sesi mengajar telah diakhiri.', 'text-rose-400');
   };
 
   // Beep Audio Feedback for scanning simulation
@@ -1104,6 +1442,16 @@ export default function App() {
     }
 
     if (btn.id === 'datang' || btn.id === 'pulang' || btn.id === 'mengajar' || btn.id === 'izin') {
+      if (btn.id === 'mengajar') {
+        if (!ruangKelas) {
+          setRuangKelas('VII - A');
+          localStorage.setItem('ruangKelas', 'VII - A');
+        }
+        if (!mataPelajaran) {
+          setMataPelajaran('PAI');
+          localStorage.setItem('mataPelajaran', 'PAI');
+        }
+      }
       setModalState({ show: true, type: btn });
       if (btn.id !== 'izin') {
         startCamera();
@@ -1241,6 +1589,14 @@ export default function App() {
     playBeep('success');
     if (btn.id === 'mengajar') {
       setIsSesiMengajarAktif(true);
+      setSesiMengajarTanggal(formattedDate);
+      localStorage.setItem('isSesiMengajarAktif', 'true');
+      localStorage.setItem('sesiMengajarTanggal', formattedDate);
+      localStorage.setItem('ruangKelas', ruangKelas);
+      localStorage.setItem('mataPelajaran', mataPelajaran);
+      localStorage.setItem('jamMulai', jamMulai);
+      localStorage.setItem('jamSelesai', jamSelesai);
+      
       showNotification(`Sesi Mengajar Kelas ${ruangKelas} (${mataPelajaran}) telah dimulai!`, btn.color);
       
       const currentTeacherSession = {
@@ -1252,7 +1608,8 @@ export default function App() {
         jam: `${jamMulai} - ${jamSelesai}`,
         status: 'Mengajar',
         timeStarted: formattedTime,
-        timeEnded: '-'
+        timeEnded: '-',
+        date: formattedDate
       };
       setTeachingSessionsToday(prev => [currentTeacherSession, ...prev]);
       saveTeachingSessionSync(currentTeacherSession);
@@ -1778,19 +2135,39 @@ export default function App() {
       const recordTimeStr = now.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
       // Avoid duplication
-      const isAlreadyScanned = studentRecords.some(rec => rec.nis === found.nis);
+      const activeSession = teachingSessionsToday.find(s => 
+        s.nip === nip && 
+        s.kelas === ruangKelas && 
+        s.mapel === mataPelajaran &&
+        s.status === 'Mengajar'
+      );
+      const activeSessionId = activeSession ? activeSession.id : '';
+      const activeSessionMapel = activeSession ? activeSession.mapel : '';
+      const activeSessionGuru = activeSession ? activeSession.name : '';
+      const todayStr = now.toLocaleDateString('en-CA');
+
+      const isAlreadyScanned = studentRecords.some(rec => 
+        rec.nis === found.nis && 
+        (rec.date === todayStr) && 
+        (rec.sessionId || '') === activeSessionId
+      );
+
       if (isAlreadyScanned) {
         playBeep('warning');
-        showNotification(`${found.name} sudah melakukan presensi hari ini.`, 'text-amber-400');
+        showNotification(`${found.name} sudah melakukan presensi untuk sesi ini/hari ini.`, 'text-amber-400');
       } else {
         playBeep('success');
         const newRec = {
-          id: Math.random().toString(36).substr(2, 9),
+          id: 'sr_' + Math.random().toString(36).substr(2, 9),
           name: found.name,
           nis: found.nis,
           kelas: found.kelas,
           time: recordTimeStr,
-          status: 'Hadir'
+          status: 'Hadir',
+          sessionId: activeSessionId,
+          mapel: activeSessionMapel,
+          guru: activeSessionGuru,
+          date: todayStr
         };
         setStudentRecords(prev => [newRec, ...prev]);
         saveStudentRecordSync(newRec);
@@ -2311,6 +2688,97 @@ export default function App() {
                     </>
                   )}
                 </div>
+
+                {isTeacherRole && isSessionTimeActive() && (
+                  <div className="bg-white/[0.02] border border-cyan-500/20 rounded-3xl p-6 relative overflow-hidden mt-6 shadow-[0_0_25px_rgba(34,211,238,0.05)]">
+                    <div className="absolute top-0 inset-x-0 h-1 bg-gradient-to-r from-cyan-500 to-blue-500"></div>
+                    
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6 border-b border-white/5 pb-4">
+                      <div className="flex items-center gap-3">
+                        <div className="p-2.5 bg-cyan-500/10 rounded-xl text-cyan-400">
+                          <BookOpen className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <h4 className="font-normal text-lg text-white">Sesi Mengajar Aktif: Kelas {ruangKelas}</h4>
+                          <p className="text-xs text-cyan-400 mt-0.5">Mata Pelajaran: {mataPelajaran} • Guru: {nama}</p>
+                        </div>
+                      </div>
+                      
+                      <div className="flex items-center gap-3">
+                        <span className="text-xs font-mono text-cyan-400 bg-cyan-500/10 border border-cyan-500/20 px-3 py-1 rounded-lg">
+                          Sesi: {jamMulai} - {jamSelesai}
+                        </span>
+                        <button
+                          onClick={handleEndTeachingSession}
+                          className="text-xs font-normal text-rose-400 hover:text-rose-300 bg-rose-500/10 hover:bg-rose-500/20 px-3 py-1.5 rounded-xl border border-rose-500/20 cursor-pointer active:scale-95 transition-all"
+                        >
+                          Akhiri Sesi
+                        </button>
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="flex items-center justify-between mb-4">
+                        <h5 className="text-sm font-normal text-white">Daftar Kehadiran Siswa Sesi Ini</h5>
+                        <span className="text-xs text-gray-400 font-mono">
+                          {activeSessionStudents.filter(s => s.status === 'Hadir').length} / {activeSessionStudents.length} Siswa Hadir
+                        </span>
+                      </div>
+
+                      {activeSessionStudents.length === 0 ? (
+                        <p className="text-sm text-gray-500 text-center py-6">Tidak ada data siswa untuk kelas {ruangKelas}.</p>
+                      ) : (
+                        <div className="max-h-96 overflow-y-auto pr-2 custom-scrollbar space-y-3">
+                          {activeSessionStudents.map(student => (
+                            <div key={student.nis} className="flex items-center justify-between p-3.5 bg-[#05050A]/40 border border-white/5 rounded-2xl hover:bg-white/[0.02] transition-colors">
+                              <div>
+                                <h6 className="text-sm font-normal text-white">{student.name}</h6>
+                                <p className="text-xs text-gray-400 mt-0.5 font-mono">NIS {student.nis} {student.time !== '-' && `• Hadir: ${student.time}`}</p>
+                              </div>
+                              <div className="flex gap-1.5">
+                                {['Hadir', 'Sakit', 'Izin', 'Alpa'].map(st => {
+                                  let bgClass = 'bg-white/5 text-gray-400 hover:bg-white/10 border border-transparent';
+                                  if (student.status === st) {
+                                    if (st === 'Hadir') bgClass = 'bg-emerald-500 text-white font-normal shadow-[0_0_12px_rgba(16,185,129,0.3)]';
+                                    if (st === 'Sakit') bgClass = 'bg-yellow-500 text-black font-normal shadow-[0_0_12px_rgba(234,179,8,0.3)]';
+                                    if (st === 'Izin') bgClass = 'bg-blue-500 text-white font-normal shadow-[0_0_12px_rgba(59,130,246,0.3)]';
+                                    if (st === 'Alpa') bgClass = 'bg-rose-500 text-white font-normal shadow-[0_0_12px_rgba(244,63,94,0.3)]';
+                                  }
+                                  
+                                  const activeSession = teachingSessionsToday.find(s => 
+                                    s.nip === nip && 
+                                    s.kelas === ruangKelas && 
+                                    s.mapel === mataPelajaran &&
+                                    s.status === 'Mengajar'
+                                  );
+                                  const activeSessionId = activeSession ? activeSession.id : 'default';
+
+                                  return (
+                                    <button
+                                      key={st}
+                                      onClick={() => handleUpdateStudentStatus(
+                                        student.nis, 
+                                        student.name, 
+                                        student.kelas, 
+                                        st, 
+                                        activeSessionId, 
+                                        mataPelajaran, 
+                                        nama
+                                      )}
+                                      className={`px-2.5 py-1 rounded-xl text-[10px] font-normal transition-all cursor-pointer ${bgClass}`}
+                                    >
+                                      {st}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
               </motion.div>
             )}
 
@@ -2618,6 +3086,21 @@ export default function App() {
                         className="w-full sm:w-auto bg-[#0A0A0F] border border-white/10 rounded-xl px-4 py-2.5 text-white text-sm focus:outline-none focus:border-emerald-500/50 transition-colors"
                       />
                     </div>
+                    <div className="relative">
+                      <select 
+                        value={selectedSessionFilter}
+                        onChange={(e) => setSelectedSessionFilter(e.target.value)}
+                        className="w-full sm:w-auto appearance-none bg-[#0A0A0F] border border-white/10 rounded-xl px-4 py-2.5 pr-10 text-white text-sm focus:outline-none focus:border-emerald-500/50 transition-colors"
+                      >
+                        <option value="all">Presensi Barcode / Harian</option>
+                        {classSessionsOnDate.map(session => (
+                          <option key={session.id} value={session.id}>
+                            Sesi: {session.mapel} ({session.name})
+                          </option>
+                        ))}
+                      </select>
+                      <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500 pointer-events-none" />
+                    </div>
                   </div>
                 </div>
 
@@ -2694,73 +3177,80 @@ export default function App() {
                         </tr>
                       </thead>
                       <tbody>
-                        {classStudents.map((student, idx) => (
-                          <tr key={idx} className="border-t border-white/5 hover:bg-white/5 transition-colors">
-                            <td className="py-3 px-5 text-gray-300 text-sm">{student.nis}</td>
-                            <td className="py-3 px-5 text-white text-sm">{student.name}</td>
-                            <td className="py-3 px-5">
-                              <span className={`inline-block px-2.5 py-1 rounded-full text-xs ${
-                                student.status === 'Hadir' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' :
-                                student.status === 'Alpa' ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20' :
-                                student.status === 'Sakit' ? 'bg-yellow-500/10 text-yellow-400 border border-yellow-500/20' :
-                                'bg-blue-500/10 text-blue-400 border border-blue-500/20'
-                              }`}>
-                                {student.status}
-                              </span>
-                            </td>
-                            <td className="py-3 px-5 text-gray-400 text-sm">
-                              {student.status === 'Hadir' ? student.time : '-'}
-                            </td>
-                            <td className="py-3 px-5">
-                              <div className="flex items-center gap-1.5 flex-wrap">
-                                <button
-                                  onClick={() => handleUpdateStudentStatus(student.nis, student.name, student.kelas || '', 'Hadir')}
-                                  title="Set Hadir"
-                                  className={`px-2 py-1 rounded text-[10px] font-normal transition-all cursor-pointer ${
-                                    student.status === 'Hadir' 
-                                      ? 'bg-emerald-500 text-white font-medium shadow-[0_0_12px_rgba(16,185,129,0.3)]' 
-                                      : 'bg-white/5 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20'
-                                  }`}
-                                >
-                                  Hadir
-                                </button>
-                                <button
-                                  onClick={() => handleUpdateStudentStatus(student.nis, student.name, student.kelas || '', 'Sakit')}
-                                  title="Set Sakit"
-                                  className={`px-2 py-1 rounded text-[10px] font-normal transition-all cursor-pointer ${
-                                    student.status === 'Sakit' 
-                                      ? 'bg-yellow-500 text-black font-medium shadow-[0_0_12px_rgba(234,179,8,0.3)]' 
-                                      : 'bg-white/5 hover:bg-yellow-500/20 text-yellow-400 border border-yellow-500/20'
-                                  }`}
-                                >
-                                  Sakit
-                                </button>
-                                <button
-                                  onClick={() => handleUpdateStudentStatus(student.nis, student.name, student.kelas || '', 'Izin')}
-                                  title="Set Izin"
-                                  className={`px-2 py-1 rounded text-[10px] font-normal transition-all cursor-pointer ${
-                                    student.status === 'Izin' 
-                                      ? 'bg-blue-500 text-white font-medium shadow-[0_0_12px_rgba(59,130,246,0.3)]' 
-                                      : 'bg-white/5 hover:bg-blue-500/20 text-blue-400 border border-blue-500/20'
-                                  }`}
-                                >
-                                  Izin
-                                </button>
-                                <button
-                                  onClick={() => handleUpdateStudentStatus(student.nis, student.name, student.kelas || '', 'Alpa')}
-                                  title="Set Alpa"
-                                  className={`px-2 py-1 rounded text-[10px] font-normal transition-all cursor-pointer ${
-                                    student.status === 'Alpa' 
-                                      ? 'bg-rose-500 text-white font-medium shadow-[0_0_12px_rgba(244,63,94,0.3)]' 
-                                      : 'bg-white/5 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20'
-                                  }`}
-                                >
-                                  Alpa
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                        ))}
+                        {classStudents.map((student, idx) => {
+                          const currentSession = classSessionsOnDate.find(s => s.id === selectedSessionFilter);
+                          const sId = selectedSessionFilter === 'all' ? '' : selectedSessionFilter;
+                          const sMapel = currentSession ? currentSession.mapel : '';
+                          const sGuru = currentSession ? currentSession.name : '';
+
+                          return (
+                            <tr key={idx} className="border-t border-white/5 hover:bg-white/5 transition-colors">
+                              <td className="py-3 px-5 text-gray-300 text-sm">{student.nis}</td>
+                              <td className="py-3 px-5 text-white text-sm">{student.name}</td>
+                              <td className="py-3 px-5">
+                                <span className={`inline-block px-2.5 py-1 rounded-full text-xs ${
+                                  student.status === 'Hadir' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' :
+                                  student.status === 'Alpa' ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20' :
+                                  student.status === 'Sakit' ? 'bg-yellow-500/10 text-yellow-400 border border-yellow-500/20' :
+                                  'bg-blue-500/10 text-blue-400 border border-blue-500/20'
+                                }`}>
+                                  {student.status}
+                                </span>
+                              </td>
+                              <td className="py-3 px-5 text-gray-400 text-sm">
+                                {student.status === 'Hadir' ? student.time : '-'}
+                              </td>
+                              <td className="py-3 px-5">
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <button
+                                    onClick={() => handleUpdateStudentStatus(student.nis, student.name, student.kelas || '', 'Hadir', sId, sMapel, sGuru)}
+                                    title="Set Hadir"
+                                    className={`px-2 py-1 rounded text-[10px] font-normal transition-all cursor-pointer ${
+                                      student.status === 'Hadir' 
+                                        ? 'bg-emerald-500 text-white font-medium shadow-[0_0_12px_rgba(16,185,129,0.3)]' 
+                                        : 'bg-white/5 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20'
+                                    }`}
+                                  >
+                                    Hadir
+                                  </button>
+                                  <button
+                                    onClick={() => handleUpdateStudentStatus(student.nis, student.name, student.kelas || '', 'Sakit', sId, sMapel, sGuru)}
+                                    title="Set Sakit"
+                                    className={`px-2 py-1 rounded text-[10px] font-normal transition-all cursor-pointer ${
+                                      student.status === 'Sakit' 
+                                        ? 'bg-yellow-500 text-black font-medium shadow-[0_0_12px_rgba(234,179,8,0.3)]' 
+                                        : 'bg-white/5 hover:bg-yellow-500/20 text-yellow-400 border border-yellow-500/20'
+                                    }`}
+                                  >
+                                    Sakit
+                                  </button>
+                                  <button
+                                    onClick={() => handleUpdateStudentStatus(student.nis, student.name, student.kelas || '', 'Izin', sId, sMapel, sGuru)}
+                                    title="Set Izin"
+                                    className={`px-2 py-1 rounded text-[10px] font-normal transition-all cursor-pointer ${
+                                      student.status === 'Izin' 
+                                        ? 'bg-blue-500 text-white font-medium shadow-[0_0_12px_rgba(59,130,246,0.3)]' 
+                                        : 'bg-white/5 hover:bg-blue-500/20 text-blue-400 border border-blue-500/20'
+                                    }`}
+                                  >
+                                    Izin
+                                  </button>
+                                  <button
+                                    onClick={() => handleUpdateStudentStatus(student.nis, student.name, student.kelas || '', 'Alpa', sId, sMapel, sGuru)}
+                                    title="Set Alpa"
+                                    className={`px-2 py-1 rounded text-[10px] font-normal transition-all cursor-pointer ${
+                                      student.status === 'Alpa' 
+                                        ? 'bg-rose-500 text-white font-medium shadow-[0_0_12px_rgba(244,63,94,0.3)]' 
+                                        : 'bg-white/5 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20'
+                                    }`}
+                                  >
+                                    Alpa
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
@@ -3301,125 +3791,228 @@ export default function App() {
                     </div>
 
                     <div className="space-y-4">
-                      {teachingSessionsToday.map(session => (
-                        <div key={session.id} className="p-4 bg-white/[0.02] border border-white/5 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-white/[0.04] transition-all duration-300">
-                          <div className="flex items-start gap-3">
-                            <div className={`w-9 h-9 rounded-xl flex items-center justify-center font-normal text-xs ${
-                              session.status === 'Mengajar' ? 'bg-cyan-500/10 text-cyan-400' :
-                              session.status === 'Selesai' ? 'bg-emerald-500/10 text-emerald-400' :
-                              'bg-gray-500/10 text-gray-400'
-                            }`}>
-                              {session.name.substring(0, 2)}
+                      {filteredTeachingSessionsToday.length === 0 ? (
+                        <div className="text-center py-10 text-gray-500 text-sm font-normal">
+                          Belum ada aktivitas sesi mengajar hari ini.
+                        </div>
+                      ) : (
+                        filteredTeachingSessionsToday.map(session => (
+                          <div key={session.id} className="p-4 bg-white/[0.02] border border-white/5 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-white/[0.04] transition-all duration-300">
+                            <div className="flex items-start gap-3">
+                              <div className={`w-9 h-9 rounded-xl flex items-center justify-center font-normal text-xs ${
+                                session.status === 'Mengajar' ? 'bg-cyan-500/10 text-cyan-400' :
+                                session.status === 'Selesai' ? 'bg-emerald-500/10 text-emerald-400' :
+                                'bg-gray-500/10 text-gray-400'
+                              }`}>
+                                {session.name.substring(0, 2)}
+                              </div>
+                              <div>
+                                <p className="text-sm font-normal text-white">{session.name}</p>
+                                <p className="text-[11px] text-gray-400 mt-0.5">
+                                  {isTeacherRole ? (
+                                    <>Mapel: <span className="text-gray-300">{session.mapel}</span> • Kelas: <span className="text-gray-300">{session.kelas}</span></>
+                                  ) : (
+                                    <>Tugas: <span className="text-gray-300">{session.mapel}</span> • Lokasi: <span className="text-gray-300">{session.kelas}</span></>
+                                  )}
+                                </p>
+                                <div className="flex items-center gap-2 mt-1.5 font-mono text-[10px] text-gray-500">
+                                  <span>Rencana: {session.jam}</span>
+                                  {session.timeStarted !== '-' && (
+                                    <>
+                                      <span className="text-gray-600">•</span>
+                                      <span className="text-cyan-400/80">Mulai: {session.timeStarted}</span>
+                                    </>
+                                  )}
+                                  {session.timeEnded !== '-' && (
+                                    <>
+                                      <span className="text-gray-600">•</span>
+                                      <span className="text-emerald-400/80">Selesai: {session.timeEnded}</span>
+                                    </>
+                                  )}
+                                </div>
+                              </div>
                             </div>
-                            <div>
-                              <p className="text-sm font-normal text-white">{session.name}</p>
-                              <p className="text-[11px] text-gray-400 mt-0.5">
-                                {isTeacherRole ? (
-                                  <>Mapel: <span className="text-gray-300">{session.mapel}</span> • Kelas: <span className="text-gray-300">{session.kelas}</span></>
-                                ) : (
-                                  <>Tugas: <span className="text-gray-300">{session.mapel}</span> • Lokasi: <span className="text-gray-300">{session.kelas}</span></>
+
+                            <div className="flex sm:flex-col items-start sm:items-end justify-between sm:justify-center gap-1">
+                              <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-normal border ${
+                                session.status === 'Mengajar' ? 'bg-cyan-500/15 text-cyan-400 border-cyan-500/30' :
+                                session.status === 'Selesai' ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' :
+                                'bg-gray-500/15 text-gray-400 border-white/10'
+                              }`}>
+                                {session.status === 'Mengajar' && (
+                                  <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping" />
                                 )}
-                              </p>
-                              <div className="flex items-center gap-2 mt-1.5 font-mono text-[10px] text-gray-500">
-                                <span>Rencana: {session.jam}</span>
-                                {session.timeStarted !== '-' && (
-                                  <>
-                                    <span className="text-gray-600">•</span>
-                                    <span className="text-cyan-400/80">Mulai: {session.timeStarted}</span>
-                                  </>
+                                {session.status}
+                              </span>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Right Column: Kehadiran Absensi Guru Hari Ini */}
+                  <div className="bg-white/[0.02] border border-white/10 rounded-3xl p-6 relative overflow-hidden flex flex-col h-full">
+                    <div className="absolute top-0 inset-x-0 h-1 bg-gradient-to-r from-blue-500 to-indigo-500"></div>
+                    
+                    {/* Header with Title & Live Stats */}
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-5">
+                      <div className="flex items-center gap-2.5">
+                        <Activity className="w-5 h-5 text-blue-400" />
+                        <div>
+                          <h4 className="font-normal text-lg text-white">Kehadiran Absensi Guru Hari Ini</h4>
+                          <p className="text-xs text-gray-400 mt-0.5">Live status presensi & check-in seluruh guru</p>
+                        </div>
+                      </div>
+                      <span className="self-start sm:self-center text-[11px] text-blue-400 bg-blue-400/10 px-3 py-1 rounded-full border border-blue-400/20 font-normal">
+                        {mappedTeachersToday.filter(t => t.statusType === 'hadir' || t.statusType === 'pulang').length} / {teachers.length} Hadir
+                      </span>
+                    </div>
+
+                    {/* Search & Status Filters */}
+                    <div className="space-y-3 mb-5">
+                      <div className="relative">
+                        <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
+                        <input
+                          type="text"
+                          value={teacherSearchQuery}
+                          onChange={(e) => setTeacherSearchQuery(e.target.value)}
+                          placeholder="Cari nama guru atau NIP..."
+                          className="w-full pl-10 pr-4 py-2 bg-white/5 border border-white/10 rounded-xl text-xs text-white placeholder-gray-500 focus:outline-none focus:border-blue-500/50 transition-all font-normal"
+                        />
+                        {teacherSearchQuery && (
+                          <button 
+                            onClick={() => setTeacherSearchQuery('')}
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-white transition-colors"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Filter Buttons */}
+                      <div className="flex flex-wrap gap-1.5">
+                        {[
+                          { id: 'semua', label: 'Semua' },
+                          { id: 'hadir', label: 'Hadir' },
+                          { id: 'belum', label: 'Belum Absen' },
+                          { id: 'izin', label: 'Izin / Sakit' }
+                        ].map(btn => (
+                          <button
+                            key={btn.id}
+                            onClick={() => setTeacherStatusFilter(btn.id as any)}
+                            className={`px-3 py-1 rounded-lg text-[10px] font-normal transition-all cursor-pointer border ${
+                              teacherStatusFilter === btn.id
+                                ? 'bg-blue-500/15 text-blue-400 border-blue-500/30'
+                                : 'bg-transparent text-gray-400 border-white/5 hover:bg-white/5 hover:text-white'
+                            }`}
+                          >
+                            {btn.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Teachers List */}
+                    <div className="space-y-3 max-h-[360px] overflow-y-auto pr-1">
+                      {filteredTeachersToday.length === 0 ? (
+                        <div className="text-center py-10 text-gray-500 text-xs font-normal">
+                          Tidak ada guru yang cocok dengan filter atau pencarian.
+                        </div>
+                      ) : (
+                        filteredTeachersToday.map(teacher => (
+                          <div 
+                            key={teacher.nip} 
+                            className="p-3.5 bg-white/[0.02] border border-white/5 rounded-2xl flex items-center justify-between hover:bg-white/[0.04] transition-all duration-300"
+                          >
+                            <div className="flex items-center gap-3 min-w-0">
+                              {/* Avatar with Status Color Border */}
+                              <div className={`w-9 h-9 rounded-full flex items-center justify-center font-normal text-xs shrink-0 relative ${
+                                teacher.statusType === 'pulang' ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20' :
+                                teacher.statusType === 'hadir' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' :
+                                teacher.statusType === 'izin' ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20' :
+                                'bg-gray-500/10 text-gray-400 border border-white/5'
+                              }`}>
+                                {teacher.name.substring(0, 2).toUpperCase()}
+                                {/* Real-time presence pulse dot */}
+                                {(teacher.statusType === 'hadir' || teacher.statusType === 'pulang') && (
+                                  <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-500 border-2 border-[#05050A]"></span>
                                 )}
-                                {session.timeEnded !== '-' && (
-                                  <>
-                                    <span className="text-gray-600">•</span>
-                                    <span className="text-emerald-400/80">Selesai: {session.timeEnded}</span>
-                                  </>
+                              </div>
+
+                              <div className="min-w-0">
+                                <p className="text-xs font-normal text-white truncate">{teacher.name}</p>
+                                <p className="text-[10px] text-gray-400 font-normal truncate">
+                                  NIP {teacher.nip} • <span className="text-gray-500">{teacher.mapel || 'Staff'}</span>
+                                </p>
+                              </div>
+                            </div>
+
+                            {/* Status Badge & Actions */}
+                            <div className="flex items-center gap-2">
+                              {/* Show Photo Preview if available */}
+                              {teacher.photo && (
+                                <button
+                                  onClick={() => setSelectedPhotoUrl(teacher.photo)}
+                                  className="p-1.5 bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white rounded-lg transition-all border border-white/5"
+                                  title="Lihat Foto Selfie"
+                                >
+                                  <Camera className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+
+                              <div className="flex flex-col items-end">
+                                <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-normal border ${
+                                  teacher.statusType === 'pulang' ? 'bg-rose-500/10 text-rose-400 border-rose-500/20' :
+                                  teacher.statusType === 'hadir' && teacher.recordStatus === 'Terlambat' ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' :
+                                  teacher.statusType === 'hadir' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' :
+                                  teacher.statusType === 'izin' ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' :
+                                  'bg-gray-500/5 text-gray-500 border-white/5'
+                                }`}>
+                                  {teacher.statusType === 'hadir' && teacher.recordStatus === 'Terlambat' ? (
+                                    <>
+                                      <Clock className="w-2.5 h-2.5" />
+                                      Terlambat
+                                    </>
+                                  ) : teacher.statusType === 'hadir' ? (
+                                    <>
+                                      <Check className="w-2.5 h-2.5" />
+                                      Hadir
+                                    </>
+                                  ) : teacher.statusType === 'pulang' ? (
+                                    <>
+                                      <LogOut className="w-2.5 h-2.5" />
+                                      Pulang
+                                    </>
+                                  ) : teacher.statusType === 'izin' ? (
+                                    <>
+                                      <UserMinus className="w-2.5 h-2.5" />
+                                      {teacher.statusLabel}
+                                    </>
+                                  ) : (
+                                    'Belum Absen'
+                                  )}
+                                </span>
+                                
+                                {teacher.statusType !== 'belum' && (
+                                  <div className="flex items-center gap-1.5 mt-1 font-mono text-[9px] text-gray-500">
+                                    <span>{teacher.recordTime}</span>
+                                    {teacher.distance !== undefined && (
+                                      <>
+                                        <span>•</span>
+                                        <span className="flex items-center gap-0.5 text-gray-400">
+                                          <MapPin className="w-2 h-2 text-blue-400" />
+                                          {teacher.distance}m
+                                        </span>
+                                      </>
+                                    )}
+                                  </div>
                                 )}
                               </div>
                             </div>
                           </div>
-
-                          <div className="flex sm:flex-col items-start sm:items-end justify-between sm:justify-center gap-1">
-                            <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-normal border ${
-                              session.status === 'Mengajar' ? 'bg-cyan-500/15 text-cyan-400 border-cyan-500/30' :
-                              session.status === 'Selesai' ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' :
-                              'bg-gray-500/15 text-gray-400 border-white/10'
-                            }`}>
-                              {session.status === 'Mengajar' && (
-                                <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping" />
-                              )}
-                              {session.status}
-                            </span>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Right Column: Konsolidasi Kehadiran Terkini */}
-                  <div className="bg-white/[0.02] border border-white/10 rounded-3xl p-6 relative overflow-hidden">
-                    <div className="absolute top-0 inset-x-0 h-1 bg-gradient-to-r from-blue-500 to-indigo-500"></div>
-                    <div className="flex items-center gap-2.5 mb-5">
-                      <Activity className="w-5 h-5 text-blue-400" />
-                      <h4 className="font-normal text-lg text-white">Konsolidasi Kehadiran Terkini</h4>
-                    </div>
-                    
-                    <div className="space-y-3">
-                      {studentRecords.length === 0 && teachingSessionsToday.filter(s => s.status !== 'Belum Mulai').length === 0 && todayTeacherRecords.length === 0 && (
-                        <div className="text-center py-8 text-gray-500 text-sm font-normal">
-                          Belum ada aktivitas kehadiran saat ini.
-                        </div>
+                        ))
                       )}
-
-                      {/* Presensi Datang/Pulang Guru Hari Ini */}
-                      {todayTeacherRecords.slice(0, 3).map(rec => (
-                        <div key={rec.id} className="p-4 bg-white/[0.02] border border-white/5 rounded-2xl flex items-center justify-between hover:bg-white/[0.04] transition-all">
-                          <div className="flex items-center gap-3">
-                            <div className="w-9 h-9 rounded-full bg-emerald-500/10 flex items-center justify-center text-emerald-400 font-normal text-xs">
-                              G
-                            </div>
-                            <div>
-                              <p className="text-sm font-normal text-white">{rec.nama} (Guru)</p>
-                              <p className="text-[11px] text-gray-400 font-normal">
-                                {rec.type} • NIP {rec.nip}
-                              </p>
-                            </div>
-                          </div>
-                          <span className="font-mono text-xs font-normal text-gray-400">{rec.time}</span>
-                        </div>
-                      ))}
-
-                      {studentRecords.slice(0, 3).map(rec => (
-                        <div key={rec.id} className="p-4 bg-white/[0.02] border border-white/5 rounded-2xl flex items-center justify-between">
-                          <div className="flex items-center gap-3">
-                            <div className="w-9 h-9 rounded-full bg-blue-500/10 flex items-center justify-center text-blue-400 font-normal text-xs">
-                              S
-                            </div>
-                            <div>
-                              <p className="text-sm font-normal text-white">{rec.name} (Siswa)</p>
-                              <p className="text-[11px] text-gray-400">Absen Barcode Kelas {rec.kelas} • NIS {rec.nis}</p>
-                            </div>
-                          </div>
-                          <span className="font-mono text-xs font-normal text-gray-400">{rec.time}</span>
-                        </div>
-                      ))}
-                      {teachingSessionsToday.filter(s => s.status !== 'Belum Mulai').slice(0, 3).map(session => (
-                        <div key={session.id} className="p-4 bg-white/[0.02] border border-white/5 rounded-2xl flex items-center justify-between">
-                          <div className="flex items-center gap-3">
-                            <div className="w-9 h-9 rounded-full bg-cyan-500/10 flex items-center justify-center text-cyan-400 font-normal text-xs">
-                              M
-                            </div>
-                            <div>
-                              <p className="text-sm font-normal text-white">{session.name} (Guru)</p>
-                              <p className="text-[11px] text-gray-400 font-normal">
-                                {session.status === 'Mengajar' ? 'Mulai Mengajar' : 'Selesai Mengajar'} • Mapel {session.mapel} Kelas {session.kelas}
-                              </p>
-                            </div>
-                          </div>
-                          <span className="font-mono text-xs font-normal text-gray-400">
-                            {session.status === 'Mengajar' ? session.timeStarted : session.timeEnded}
-                          </span>
-                        </div>
-                      ))}
                     </div>
                   </div>
                 </div>
@@ -3683,9 +4276,7 @@ export default function App() {
                               </button>
                               <button
                                 onClick={() => {
-                                  setTeachers(prev => prev.filter(x => x.nip !== t.nip));
-                                  deleteTeacherSync(t.nip);
-                                  showNotification(`Guru ${t.name} dihapus.`, 'text-red-400');
+                                  setTeacherToDelete(t);
                                 }}
                                 className="p-2 text-rose-400/60 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-all cursor-pointer"
                                 title="Hapus Guru"
@@ -3803,9 +4394,7 @@ export default function App() {
                               </button>
                               <button
                                 onClick={() => {
-                                  setStudents(prev => prev.filter(x => x.nis !== s.nis));
-                                  deleteStudentSync(s.nis);
-                                  showNotification(`Siswa ${s.name} dihapus.`, 'text-red-400');
+                                  setStudentToDelete(s);
                                 }}
                                 className="p-2 text-rose-400/60 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-all cursor-pointer"
                                 title="Hapus Siswa"
@@ -4967,11 +5556,20 @@ export default function App() {
                           <select 
                             value={exportTeacherMonth}
                             onChange={(e) => setExportTeacherMonth(e.target.value)}
-                            className="w-full appearance-none bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 pr-10 text-white text-sm focus:outline-none focus:border-purple-500/50 transition-colors">
-                            <option value="06-2026">Juni 2026</option>
-                            <option value="05-2026">Mei 2026</option>
-                            <option value="04-2026">April 2026</option>
-                            <option value="all">Semua Data (Tahun Ajaran Aktif)</option>
+                            className="w-full appearance-none bg-[#0D0D19] border border-white/20 rounded-xl px-4 py-2.5 pr-10 text-white text-sm focus:outline-none focus:border-purple-500/50 transition-colors cursor-pointer shadow-lg font-medium">
+                            <option value="12-2026" className="bg-[#0d0d19] text-white">Desember 2026</option>
+                            <option value="11-2026" className="bg-[#0d0d19] text-white">November 2026</option>
+                            <option value="10-2026" className="bg-[#0d0d19] text-white">Oktober 2026</option>
+                            <option value="09-2026" className="bg-[#0d0d19] text-white">September 2026</option>
+                            <option value="08-2026" className="bg-[#0d0d19] text-white">Agustus 2026</option>
+                            <option value="07-2026" className="bg-[#0d0d19] text-white">Juli 2026</option>
+                            <option value="06-2026" className="bg-[#0d0d19] text-white">Juni 2026</option>
+                            <option value="05-2026" className="bg-[#0d0d19] text-white">Mei 2026</option>
+                            <option value="04-2026" className="bg-[#0d0d19] text-white">April 2026</option>
+                            <option value="03-2026" className="bg-[#0d0d19] text-white">Maret 2026</option>
+                            <option value="02-2026" className="bg-[#0d0d19] text-white">Februari 2026</option>
+                            <option value="01-2026" className="bg-[#0d0d19] text-white">Januari 2026</option>
+                            <option value="all" className="bg-[#0d0d19] text-white">Semua Data (Tahun Ajaran Aktif)</option>
                           </select>
                           <ChevronDown className="w-4 h-4 text-gray-400 absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none" />
                         </div>
@@ -4980,14 +5578,39 @@ export default function App() {
                           <button 
                             onClick={() => {
                               const doc = new jsPDF();
+                              const getMonthLabel = (val: string) => {
+                                if (val === 'all') return 'Semua Data';
+                                const [m, y] = val.split('-');
+                                const monthsMap: { [key: string]: string } = {
+                                  '01': 'Januari', '02': 'Februari', '03': 'Maret', '04': 'April',
+                                  '05': 'Mei', '06': 'Juni', '07': 'Juli', '08': 'Agustus',
+                                  '09': 'September', '10': 'Oktober', '11': 'November', '12': 'Desember'
+                                };
+                                return `${monthsMap[m] || m} ${y}`;
+                              };
+
                               doc.setFontSize(16);
                               doc.text('Laporan Rekapitulasi Absensi Guru', 14, 22);
                               doc.setFontSize(11);
-                              doc.text(`Periode: ${exportTeacherMonth === 'all' ? 'Semua Data' : exportTeacherMonth}`, 14, 30);
+                              doc.text(`Periode: ${getMonthLabel(exportTeacherMonth)}`, 14, 30);
                               doc.text(`Dicetak pada: ${new Date().toLocaleDateString('id-ID')}`, 14, 36);
                               
                               const tableData = teachers.map((teacher, idx) => {
-                                const teacherRecords = records.filter(r => r.nip === teacher.nip);
+                                const teacherRecords = records.filter(r => {
+                                  if (r.nip !== teacher.nip) return false;
+                                  if (exportTeacherMonth === 'all') return true;
+                                  
+                                  const [m, y] = exportTeacherMonth.split('-');
+                                  const monthsMap: { [key: string]: string[] } = {
+                                    '01': ['Jan'], '02': ['Feb'], '03': ['Mar'], '04': ['Apr'],
+                                    '05': ['Mei', 'May'], '06': ['Jun'], '07': ['Jul'], '08': ['Agu', 'Aug'],
+                                    '09': ['Sep'], '10': ['Okt', 'Oct'], '11': ['Nov'], '12': ['Des', 'Dec']
+                                  };
+                                  const abbrs = monthsMap[m] || [];
+                                  const lowerDate = (r.date || '').toLowerCase();
+                                  return lowerDate.includes(y) && abbrs.some(abbr => lowerDate.includes(abbr.toLowerCase()));
+                                });
+
                                 const totalDays = 20;
                                 const sakit = teacherRecords.filter(r => r.type === 'Sakit').length;
                                 const izin = teacherRecords.filter(r => r.type === 'Izin' || r.type === 'Dinas').length;
@@ -5031,7 +5654,21 @@ export default function App() {
                             onClick={() => {
                               const headers = ['No', 'Nama Guru', 'NIP', 'Kehadiran (%)', 'Izin', 'Sakit', 'Alpa'];
                               const data = teachers.map((teacher, idx) => {
-                                const teacherRecords = records.filter(r => r.nip === teacher.nip);
+                                const teacherRecords = records.filter(r => {
+                                  if (r.nip !== teacher.nip) return false;
+                                  if (exportTeacherMonth === 'all') return true;
+                                  
+                                  const [m, y] = exportTeacherMonth.split('-');
+                                  const monthsMap: { [key: string]: string[] } = {
+                                    '01': ['Jan'], '02': ['Feb'], '03': ['Mar'], '04': ['Apr'],
+                                    '05': ['Mei', 'May'], '06': ['Jun'], '07': ['Jul'], '08': ['Agu', 'Aug'],
+                                    '09': ['Sep'], '10': ['Okt', 'Oct'], '11': ['Nov'], '12': ['Des', 'Dec']
+                                  };
+                                  const abbrs = monthsMap[m] || [];
+                                  const lowerDate = (r.date || '').toLowerCase();
+                                  return lowerDate.includes(y) && abbrs.some(abbr => lowerDate.includes(abbr.toLowerCase()));
+                                });
+
                                 const totalDays = 20;
                                 const sakit = teacherRecords.filter(r => r.type === 'Sakit').length;
                                 const izin = teacherRecords.filter(r => r.type === 'Izin' || r.type === 'Dinas').length;
@@ -5093,20 +5730,35 @@ export default function App() {
                       <div className="space-y-4">
                         <div className="grid grid-cols-2 gap-3">
                           <div className="relative">
-                            <select className="w-full appearance-none bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 pr-10 text-white text-sm focus:outline-none focus:border-blue-500/50 transition-colors">
-                              <option value="all">Semua Kelas</option>
-                              <option value="7A">Kelas 7A</option>
-                              <option value="7B">Kelas 7B</option>
-                              <option value="8A">Kelas 8A</option>
-                              <option value="9A">Kelas 9A</option>
+                            <select 
+                              value={exportStudentClass}
+                              onChange={(e) => setExportStudentClass(e.target.value)}
+                              className="w-full appearance-none bg-[#0D0D19] border border-white/20 rounded-xl px-4 py-2.5 pr-10 text-white text-sm focus:outline-none focus:border-blue-500/50 transition-colors cursor-pointer shadow-lg font-medium">
+                              <option value="all" className="bg-[#0d0d19] text-white">Semua Kelas</option>
+                              {Array.from(new Set(students.map(s => s.kelas))).filter(Boolean).sort().map(cls => (
+                                <option key={cls} value={cls} className="bg-[#0d0d19] text-white">Kelas {cls}</option>
+                              ))}
                             </select>
                             <ChevronDown className="w-4 h-4 text-gray-400 absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none" />
                           </div>
                           <div className="relative">
-                            <select className="w-full appearance-none bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 pr-10 text-white text-sm focus:outline-none focus:border-blue-500/50 transition-colors">
-                              <option value="06-2026">Juni 2026</option>
-                              <option value="05-2026">Mei 2026</option>
-                              <option value="04-2026">April 2026</option>
+                            <select 
+                              value={exportStudentMonth}
+                              onChange={(e) => setExportStudentMonth(e.target.value)}
+                              className="w-full appearance-none bg-[#0D0D19] border border-white/20 rounded-xl px-4 py-2.5 pr-10 text-white text-sm focus:outline-none focus:border-blue-500/50 transition-colors cursor-pointer shadow-lg font-medium">
+                              <option value="12-2026" className="bg-[#0d0d19] text-white">Desember 2026</option>
+                              <option value="11-2026" className="bg-[#0d0d19] text-white">November 2026</option>
+                              <option value="10-2026" className="bg-[#0d0d19] text-white">Oktober 2026</option>
+                              <option value="09-2026" className="bg-[#0d0d19] text-white">September 2026</option>
+                              <option value="08-2026" className="bg-[#0d0d19] text-white">Agustus 2026</option>
+                              <option value="07-2026" className="bg-[#0d0d19] text-white">Juli 2026</option>
+                              <option value="06-2026" className="bg-[#0d0d19] text-white">Juni 2026</option>
+                              <option value="05-2026" className="bg-[#0d0d19] text-white">Mei 2026</option>
+                              <option value="04-2026" className="bg-[#0d0d19] text-white">April 2026</option>
+                              <option value="03-2026" className="bg-[#0d0d19] text-white">Maret 2026</option>
+                              <option value="02-2026" className="bg-[#0d0d19] text-white">Februari 2026</option>
+                              <option value="01-2026" className="bg-[#0d0d19] text-white">Januari 2026</option>
+                              <option value="all" className="bg-[#0d0d19] text-white">Semua Data (Tahun Ajaran Aktif)</option>
                             </select>
                             <ChevronDown className="w-4 h-4 text-gray-400 absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none" />
                           </div>
@@ -5116,28 +5768,58 @@ export default function App() {
                           <button 
                             onClick={() => {
                               const doc = new jsPDF();
+                              const getMonthLabel = (val: string) => {
+                                if (val === 'all') return 'Semua Data';
+                                const [m, y] = val.split('-');
+                                const monthsMap: { [key: string]: string } = {
+                                  '01': 'Januari', '02': 'Februari', '03': 'Maret', '04': 'April',
+                                  '05': 'Mei', '06': 'Juni', '07': 'Juli', '08': 'Agustus',
+                                  '09': 'September', '10': 'Oktober', '11': 'November', '12': 'Desember'
+                                };
+                                return `${monthsMap[m] || m} ${y}`;
+                              };
+
                               doc.setFontSize(16);
                               doc.text('Laporan Rekapitulasi Absensi Siswa', 14, 22);
                               doc.setFontSize(11);
-                              doc.text(`Kelas: Semua Kelas`, 14, 30);
-                              doc.text(`Periode: Juni 2026`, 14, 36);
+                              doc.text(`Kelas: ${exportStudentClass === 'all' ? 'Semua Kelas' : `Kelas ${exportStudentClass}`}`, 14, 30);
+                              doc.text(`Periode: ${getMonthLabel(exportStudentMonth)}`, 14, 36);
                               doc.text(`Dicetak pada: ${new Date().toLocaleDateString('id-ID')}`, 14, 42);
                               
-                              const tableData = students.map((student, idx) => {
-                                const rec = studentRecords.find(r => r.nis === student.nis);
-                                const isHadir = rec?.status === 'Hadir';
-                                const isIzin = rec?.status === 'Izin' || rec?.status === 'Dinas';
-                                const isSakit = rec?.status === 'Sakit';
-                                const isAlpa = rec?.status === 'Alpa' || !rec;
+                              const filteredStudents = students.filter(student => {
+                                return exportStudentClass === 'all' || student.kelas === exportStudentClass;
+                              });
+
+                              const tableData = filteredStudents.map((student, idx) => {
+                                const recs = studentRecords.filter(r => {
+                                  if (r.nis !== student.nis) return false;
+                                  if (exportStudentMonth === 'all') return true;
+                                  
+                                  const [m, y] = exportStudentMonth.split('-');
+                                  const monthsMap: { [key: string]: string[] } = {
+                                    '01': ['Jan'], '02': ['Feb'], '03': ['Mar'], '04': ['Apr'],
+                                    '05': ['Mei', 'May'], '06': ['Jun'], '07': ['Jul'], '08': ['Agu', 'Aug'],
+                                    '09': ['Sep'], '10': ['Okt', 'Oct'], '11': ['Nov'], '12': ['Des', 'Dec']
+                                  };
+                                  const abbrs = monthsMap[m] || [];
+                                  const lowerDate = (r.date || '').toLowerCase();
+                                  return lowerDate.includes(y) && abbrs.some(abbr => lowerDate.includes(abbr.toLowerCase()));
+                                });
+
+                                const isHadir = recs.filter(r => r.status === 'Hadir').length;
+                                const isIzin = recs.filter(r => r.status === 'Izin' || r.status === 'Dinas').length;
+                                const isSakit = recs.filter(r => r.status === 'Sakit').length;
+                                const isAlpa = recs.filter(r => r.status === 'Alpa').length;
+
                                 return [
                                   (idx + 1).toString(),
                                   student.name,
                                   student.nis,
                                   student.kelas,
-                                  isHadir ? '20' : '0',
-                                  isIzin ? '1' : '0',
-                                  isSakit ? '1' : '0',
-                                  isAlpa ? '1' : '0'
+                                  isHadir.toString(),
+                                  isIzin.toString(),
+                                  isSakit.toString(),
+                                  isAlpa.toString()
                                 ];
                               });
 
@@ -5155,7 +5837,7 @@ export default function App() {
                               doc.text(schoolSettings.headmasterName, 130, finalY5 + 50);
                               doc.text(`NIP. ${schoolSettings.headmasterNip}`, 130, finalY5 + 56);
  
-                              doc.save('Rekap_Absen_Siswa_Juni_2026.pdf');
+                              doc.save(`Rekap_Absen_Siswa_${exportStudentClass}_${exportStudentMonth}.pdf`);
                               showNotification('Laporan Siswa (PDF) berhasil diunduh!', 'text-emerald-400');
                             }}
                             className="flex-1 px-4 py-2.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 rounded-xl text-sm transition-all cursor-pointer flex items-center justify-center gap-2"
@@ -5166,21 +5848,40 @@ export default function App() {
                           <button 
                             onClick={() => {
                               const headers = ['No', 'Nama Siswa', 'NIS', 'Kelas', 'Hadir', 'Izin', 'Sakit', 'Alpa'];
-                              const data = students.map((student, idx) => {
-                                const rec = studentRecords.find(r => r.nis === student.nis);
-                                const isHadir = rec?.status === 'Hadir';
-                                const isIzin = rec?.status === 'Izin' || rec?.status === 'Dinas';
-                                const isSakit = rec?.status === 'Sakit';
-                                const isAlpa = rec?.status === 'Alpa' || !rec;
+                              const filteredStudents = students.filter(student => {
+                                return exportStudentClass === 'all' || student.kelas === exportStudentClass;
+                              });
+
+                              const data = filteredStudents.map((student, idx) => {
+                                const recs = studentRecords.filter(r => {
+                                  if (r.nis !== student.nis) return false;
+                                  if (exportStudentMonth === 'all') return true;
+                                  
+                                  const [m, y] = exportStudentMonth.split('-');
+                                  const monthsMap: { [key: string]: string[] } = {
+                                    '01': ['Jan'], '02': ['Feb'], '03': ['Mar'], '04': ['Apr'],
+                                    '05': ['Mei', 'May'], '06': ['Jun'], '07': ['Jul'], '08': ['Agu', 'Aug'],
+                                    '09': ['Sep'], '10': ['Okt', 'Oct'], '11': ['Nov'], '12': ['Des', 'Dec']
+                                  };
+                                  const abbrs = monthsMap[m] || [];
+                                  const lowerDate = (r.date || '').toLowerCase();
+                                  return lowerDate.includes(y) && abbrs.some(abbr => lowerDate.includes(abbr.toLowerCase()));
+                                });
+
+                                const isHadir = recs.filter(r => r.status === 'Hadir').length;
+                                const isIzin = recs.filter(r => r.status === 'Izin' || r.status === 'Dinas').length;
+                                const isSakit = recs.filter(r => r.status === 'Sakit').length;
+                                const isAlpa = recs.filter(r => r.status === 'Alpa').length;
+
                                 return [
                                   (idx + 1).toString(),
                                   student.name,
                                   student.nis,
                                   student.kelas,
-                                  isHadir ? '20' : '0',
-                                  isIzin ? '1' : '0',
-                                  isSakit ? '1' : '0',
-                                  isAlpa ? '1' : '0'
+                                  isHadir.toString(),
+                                  isIzin.toString(),
+                                  isSakit.toString(),
+                                  isAlpa.toString()
                                 ];
                               });
                               const csvContent = [
@@ -5190,7 +5891,7 @@ export default function App() {
                               const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
                               const link = document.createElement('a');
                               link.href = URL.createObjectURL(blob);
-                              link.download = 'Rekap_Absen_Siswa_Juni_2026.csv';
+                              link.download = `Rekap_Absen_Siswa_${exportStudentClass}_${exportStudentMonth}.csv`;
                               link.click();
                               showNotification('Laporan Siswa (Excel/CSV) berhasil diunduh!', 'text-emerald-400');
                             }}
@@ -6053,6 +6754,120 @@ export default function App() {
         </div>
       )}
 
+      {/* Delete Teacher Confirmation Modal */}
+      <AnimatePresence>
+        {teacherToDelete && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md"
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.95, opacity: 0, y: 20 }}
+              className="w-full max-w-sm bg-[#0a0a0f] border border-white/10 rounded-[32px] overflow-hidden shadow-2xl p-6 relative"
+            >
+              <button 
+                onClick={() => setTeacherToDelete(null)}
+                className="absolute top-5 right-5 p-2 bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white rounded-full transition-colors backdrop-blur-md cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+
+              <div className="flex flex-col items-center text-center mt-4">
+                <div className="w-16 h-16 rounded-3xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400 mb-5 shadow-[0_0_30px_rgba(244,63,94,0.15)] animate-pulse">
+                  <Trash2 className="w-8 h-8" />
+                </div>
+                
+                <h3 className="text-xl font-normal text-white tracking-tight">Hapus Data Guru</h3>
+                <p className="text-sm text-gray-400 mt-2.5 leading-relaxed">
+                  Apakah Anda yakin ingin menghapus data guru <span className="text-white font-medium">{teacherToDelete.name}</span> (NIP: {teacherToDelete.nip})? Tindakan ini tidak dapat dibatalkan.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 mt-8">
+                <button
+                  onClick={() => setTeacherToDelete(null)}
+                  className="w-full py-3.5 rounded-2xl bg-white/5 hover:bg-white/10 text-gray-300 font-normal transition-all border border-white/5 text-sm cursor-pointer active:scale-[0.98]"
+                >
+                  Batal
+                </button>
+                <button
+                  onClick={() => {
+                    setTeachers(prev => prev.filter(x => x.nip !== teacherToDelete.nip));
+                    deleteTeacherSync(teacherToDelete.nip);
+                    showNotification(`Guru ${teacherToDelete.name} berhasil dihapus.`, 'text-red-400');
+                    setTeacherToDelete(null);
+                  }}
+                  className="w-full py-3.5 rounded-2xl bg-rose-600 hover:bg-rose-500 text-white font-normal transition-all shadow-[0_4px_25px_rgba(225,29,72,0.3)] text-sm cursor-pointer active:scale-[0.98]"
+                >
+                  Ya, Hapus
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Delete Student Confirmation Modal */}
+      <AnimatePresence>
+        {studentToDelete && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md"
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.95, opacity: 0, y: 20 }}
+              className="w-full max-w-sm bg-[#0a0a0f] border border-white/10 rounded-[32px] overflow-hidden shadow-2xl p-6 relative"
+            >
+              <button 
+                onClick={() => setStudentToDelete(null)}
+                className="absolute top-5 right-5 p-2 bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white rounded-full transition-colors backdrop-blur-md cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+
+              <div className="flex flex-col items-center text-center mt-4">
+                <div className="w-16 h-16 rounded-3xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400 mb-5 shadow-[0_0_30px_rgba(244,63,94,0.15)] animate-pulse">
+                  <Trash2 className="w-8 h-8" />
+                </div>
+                
+                <h3 className="text-xl font-normal text-white tracking-tight">Hapus Data Siswa</h3>
+                <p className="text-sm text-gray-400 mt-2.5 leading-relaxed">
+                  Apakah Anda yakin ingin menghapus data siswa <span className="text-white font-medium">{studentToDelete.name}</span> (NIS: {studentToDelete.nis})? Tindakan ini tidak dapat dibatalkan.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 mt-8">
+                <button
+                  onClick={() => setStudentToDelete(null)}
+                  className="w-full py-3.5 rounded-2xl bg-white/5 hover:bg-white/10 text-gray-300 font-normal transition-all border border-white/5 text-sm cursor-pointer active:scale-[0.98]"
+                >
+                  Batal
+                </button>
+                <button
+                  onClick={() => {
+                    setStudents(prev => prev.filter(x => x.nis !== studentToDelete.nis));
+                    deleteStudentSync(studentToDelete.nis);
+                    showNotification(`Siswa ${studentToDelete.name} berhasil dihapus.`, 'text-red-400');
+                    setStudentToDelete(null);
+                  }}
+                  className="w-full py-3.5 rounded-2xl bg-rose-600 hover:bg-rose-500 text-white font-normal transition-all shadow-[0_4px_25px_rgba(225,29,72,0.3)] text-sm cursor-pointer active:scale-[0.98]"
+                >
+                  Ya, Hapus
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Logout Confirmation Modal */}
       <AnimatePresence>
         {showLogoutConfirm && (
@@ -6588,6 +7403,37 @@ export default function App() {
                     </button>
                   </>
                 )}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+
+        {selectedPhotoUrl && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] flex items-center justify-center bg-[#05050A]/95 backdrop-blur-md p-4"
+            onClick={() => setSelectedPhotoUrl(null)}
+          >
+            <motion.div 
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="relative max-w-md w-full bg-[#0D0D15] border border-white/10 rounded-3xl p-3 overflow-hidden shadow-2xl" 
+              onClick={e => e.stopPropagation()}
+            >
+              <button 
+                className="absolute top-4 right-4 p-2 bg-white/5 hover:bg-white/10 text-white rounded-full transition-colors z-10 cursor-pointer"
+                onClick={() => setSelectedPhotoUrl(null)}
+              >
+                <X className="w-4 h-4" />
+              </button>
+              <div className="aspect-[3/4] rounded-2xl overflow-hidden border border-white/5 bg-black">
+                <img src={selectedPhotoUrl} alt="Selfie Absensi Guru" className="w-full h-full object-cover" />
+              </div>
+              <div className="mt-3 text-center text-xs text-gray-400 font-normal">
+                Foto Selfie Kehadiran Guru
               </div>
             </motion.div>
           </motion.div>
