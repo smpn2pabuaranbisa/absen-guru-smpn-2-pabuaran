@@ -644,7 +644,7 @@ export default function App() {
   }, [teachers, records, izinRequests, schoolSettings.entryLimit]);
 
   const filteredTeachersToday = useMemo(() => {
-    return mappedTeachersToday.filter(teacher => {
+    const list = mappedTeachersToday.filter(teacher => {
       const nameMatch = teacher.name.toLowerCase().includes(teacherSearchQuery.toLowerCase()) || 
                         teacher.nip.includes(teacherSearchQuery);
                         
@@ -655,6 +655,37 @@ export default function App() {
       if (teacherStatusFilter === 'belum') return teacher.statusType === 'belum';
       if (teacherStatusFilter === 'izin') return teacher.statusType === 'izin';
       return true;
+    });
+
+    return [...list].sort((a, b) => {
+      const aIsBelum = a.statusType === 'belum';
+      const bIsBelum = b.statusType === 'belum';
+
+      // 1. Taruh guru yang Belum Absen di bagian paling bawah
+      if (aIsBelum && !bIsBelum) return 1;
+      if (!aIsBelum && bIsBelum) return -1;
+      if (aIsBelum && bIsBelum) {
+        return a.name.localeCompare(b.name);
+      }
+
+      // 2. Untuk guru yang sudah absen, urutkan berdasarkan waktu absen (paling awal -> paling akhir)
+      const getSortTime = (teacher: typeof a) => {
+        const time = teacher.recordTime;
+        if (!time || time === '-' || time === 'Disetujui') {
+          return '99:99'; // Taruh izin/tanpa waktu spesifik di bagian bawah grup yang sudah absen
+        }
+        return time;
+      };
+
+      const timeA = getSortTime(a);
+      const timeB = getSortTime(b);
+
+      if (timeA !== timeB) {
+        return timeA.localeCompare(timeB);
+      }
+
+      // Jika waktu sama, urutkan berdasarkan nama
+      return a.name.localeCompare(b.name);
     });
   }, [mappedTeachersToday, teacherSearchQuery, teacherStatusFilter]);
 
