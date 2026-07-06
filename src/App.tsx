@@ -947,6 +947,33 @@ export default function App() {
   const scanTimeoutRef = useRef<any>(null);
   const recentlyScannedRef = useRef<Record<string, number>>({});
   const scanInputRef = useRef<HTMLInputElement>(null);
+
+  // Refs to avoid stale closures in camera scanning callback
+  const studentRecordsRef = useRef(studentRecords);
+  const teachingSessionsTodayRef = useRef(teachingSessionsToday);
+  const ruangKelasRef = useRef(ruangKelas);
+  const mataPelajaranRef = useRef(mataPelajaran);
+  const nipRef = useRef(nip);
+
+  useEffect(() => {
+    studentRecordsRef.current = studentRecords;
+  }, [studentRecords]);
+
+  useEffect(() => {
+    teachingSessionsTodayRef.current = teachingSessionsToday;
+  }, [teachingSessionsToday]);
+
+  useEffect(() => {
+    ruangKelasRef.current = ruangKelas;
+  }, [ruangKelas]);
+
+  useEffect(() => {
+    mataPelajaranRef.current = mataPelajaran;
+  }, [mataPelajaran]);
+
+  useEffect(() => {
+    nipRef.current = nip;
+  }, [nip]);
   const fileInputGuruRef = useRef<HTMLInputElement>(null);
   const fileInputSiswaRef = useRef<HTMLInputElement>(null);
 
@@ -2182,10 +2209,10 @@ export default function App() {
       const recordTimeStr = now.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
       // Avoid duplication
-      const activeSession = teachingSessionsToday.find(s => 
-        s.nip === nip && 
-        s.kelas === ruangKelas && 
-        s.mapel === mataPelajaran &&
+      const activeSession = teachingSessionsTodayRef.current.find(s => 
+        s.nip === nipRef.current && 
+        s.kelas === ruangKelasRef.current && 
+        s.mapel === mataPelajaranRef.current &&
         s.status === 'Mengajar'
       );
       const activeSessionId = activeSession ? activeSession.id : '';
@@ -2193,7 +2220,7 @@ export default function App() {
       const activeSessionGuru = activeSession ? activeSession.name : '';
       const todayStr = now.toLocaleDateString('en-CA');
 
-      const isAlreadyScanned = studentRecords.some(rec => 
+      const isAlreadyScanned = studentRecordsRef.current.some(rec => 
         rec.nis === found.nis && 
         (rec.date === todayStr) && 
         (rec.sessionId || '') === activeSessionId
@@ -3636,13 +3663,18 @@ export default function App() {
                       </h4>
                       
                       <div className="space-y-3 max-h-[460px] overflow-y-auto pr-2 custom-scrollbar">
-                        {studentRecords.length === 0 ? (
-                          <div className="text-center py-10">
-                            <UserMinus className="w-10 h-10 text-gray-600 mx-auto mb-2" />
-                            <p className="text-sm text-gray-500">Belum ada siswa absen hari ini.</p>
-                          </div>
-                        ) : (
-                          studentRecords.map(rec => (
+                        {(() => {
+                          const todayStr = new Date().toLocaleDateString('en-CA');
+                          const todayRecords = studentRecords.filter(rec => (rec.date || '2026-06-27') === todayStr);
+                          if (todayRecords.length === 0) {
+                            return (
+                              <div className="text-center py-10">
+                                <UserMinus className="w-10 h-10 text-gray-600 mx-auto mb-2" />
+                                <p className="text-sm text-gray-500">Belum ada siswa absen hari ini.</p>
+                              </div>
+                            );
+                          }
+                          return todayRecords.map(rec => (
                             <div key={rec.id} className="p-4 bg-white/[0.02] border border-white/5 rounded-2xl flex items-center justify-between hover:bg-white/[0.04] transition-all animate-[fadeIn_0.3s_ease-out]">
                               <div>
                                 <p className="text-sm font-normal text-white">{rec.name}</p>
@@ -3657,8 +3689,8 @@ export default function App() {
                                 </span>
                               </div>
                             </div>
-                          ))
-                        )}
+                          ));
+                        })()}
                       </div>
                     </div>
                   </div>
@@ -3764,23 +3796,25 @@ export default function App() {
 
                           <button
                             onClick={() => {
-                              const isAlreadyScanned = studentRecords.some(rec => rec.nis === s.nis);
+                              const now = new Date();
+                              const todayStr = now.toLocaleDateString('en-CA');
+                              const isAlreadyScanned = studentRecords.some(rec => rec.nis === s.nis && rec.date === todayStr);
                               if (isAlreadyScanned) {
                                 playBeep('warning');
                                 showNotification(`${s.name} sudah melakukan presensi hari ini.`, 'text-amber-400');
                                 return;
                               }
                               playBeep('success');
-                              const now = new Date();
                               const recordTimeStr = now.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
                               
                               const newRec = {
-                                id: Math.random().toString(36).substr(2, 9),
+                                id: 'sr_' + Math.random().toString(36).substr(2, 9),
                                 name: s.name,
                                 nis: s.nis,
                                 kelas: s.kelas,
                                 time: recordTimeStr,
-                                status: 'Hadir'
+                                status: 'Hadir',
+                                date: todayStr
                               };
                               setStudentRecords(prev => [newRec, ...prev]);
                               saveStudentRecordSync(newRec);
@@ -3821,17 +3855,28 @@ export default function App() {
                     </p>
                   </div>
 
-                  <div className="p-5 rounded-3xl bg-white/[0.02] border border-white/5 relative overflow-hidden">
-                    <div className="absolute top-0 right-0 w-20 h-20 bg-blue-500/5 rounded-full blur-xl"></div>
-                    <div className="p-2.5 bg-blue-500/10 rounded-xl inline-flex mb-3 text-blue-400">
-                      <QrCode className="w-5 h-5" />
-                    </div>
-                    <p className="text-xs text-gray-500 font-normal">Siswa Hadir Hari Ini</p>
-                    <p className="text-2xl font-normal text-white mt-1">{studentRecords.length} / {students.length}</p>
-                    <p className="text-[10px] text-blue-400 mt-2">
-                      {Math.round((studentRecords.length / students.length) * 100)}% Partisipasi
-                    </p>
-                  </div>
+                  {(() => {
+                    const todayStr = new Date().toLocaleDateString('en-CA');
+                    const todayRecords = studentRecords.filter(rec => 
+                      (rec.date || '2026-06-27') === todayStr && 
+                      (rec.status === 'Hadir' || rec.status === 'Terlambat')
+                    );
+                    const uniqueNisCount = new Set(todayRecords.map(rec => rec.nis)).size;
+                    const participationPercent = students.length > 0 ? Math.round((uniqueNisCount / students.length) * 100) : 0;
+                    return (
+                      <div className="p-5 rounded-3xl bg-white/[0.02] border border-white/5 relative overflow-hidden">
+                        <div className="absolute top-0 right-0 w-20 h-20 bg-blue-500/5 rounded-full blur-xl"></div>
+                        <div className="p-2.5 bg-blue-500/10 rounded-xl inline-flex mb-3 text-blue-400">
+                          <QrCode className="w-5 h-5" />
+                        </div>
+                        <p className="text-xs text-gray-500 font-normal">Siswa Hadir Hari Ini</p>
+                        <p className="text-2xl font-normal text-white mt-1">{uniqueNisCount} / {students.length}</p>
+                        <p className="text-[10px] text-blue-400 mt-2">
+                          {participationPercent}% Partisipasi
+                        </p>
+                      </div>
+                    );
+                  })()}
 
                   <div className="p-5 rounded-3xl bg-white/[0.02] border border-white/5 relative overflow-hidden">
                     <div className="absolute top-0 right-0 w-20 h-20 bg-amber-500/5 rounded-full blur-xl"></div>
