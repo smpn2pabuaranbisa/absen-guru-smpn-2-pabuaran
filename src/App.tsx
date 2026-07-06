@@ -367,6 +367,7 @@ export default function App() {
   const [attendanceDate, setAttendanceDate] = useState('2026-06-27');
   const [searchAttendanceSiswaQuery, setSearchAttendanceSiswaQuery] = useState('');
   const [selectedSessionFilter, setSelectedSessionFilter] = useState<string>('all');
+  const [personalHistoryMonth, setPersonalHistoryMonth] = useState('06-2026');
 
   useEffect(() => {
     setSelectedSessionFilter('all');
@@ -550,13 +551,28 @@ export default function App() {
     });
   }, [records, nip, schoolSettings.entryLimit]);
 
+  const filteredTeacherAttendanceHistory = useMemo(() => {
+    return teacherAttendanceHistory.filter(h => {
+      if (personalHistoryMonth === 'all') return true;
+      const [m, y] = personalHistoryMonth.split('-');
+      const monthsMap: { [key: string]: string[] } = {
+        '01': ['Jan'], '02': ['Feb'], '03': ['Mar'], '04': ['Apr'],
+        '05': ['Mei', 'May'], '06': ['Jun'], '07': ['Jul'], '08': ['Agu', 'Aug'],
+        '09': ['Sep'], '10': ['Okt', 'Oct'], '11': ['Nov'], '12': ['Des', 'Dec']
+      };
+      const abbrs = monthsMap[m] || [];
+      const lowerDate = (h.date || '').toLowerCase();
+      return lowerDate.includes(y) && abbrs.some(abbr => lowerDate.includes(abbr.toLowerCase()));
+    });
+  }, [teacherAttendanceHistory, personalHistoryMonth]);
+
   const uniqueAttendanceDaysCount = useMemo(() => {
-    const presentRecords = teacherAttendanceHistory.filter(h => 
+    const presentRecords = filteredTeacherAttendanceHistory.filter(h => 
       h.type === 'Absen Datang' || h.type === 'Absen Pulang' || h.type === 'Dinas'
     );
     const uniqueDates = new Set(presentRecords.map(h => h.date));
     return uniqueDates.size;
-  }, [teacherAttendanceHistory]);
+  }, [filteredTeacherAttendanceHistory]);
 
   const activeTeachersCount = useMemo(() => {
     const todayStrID = new Date().toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' });
@@ -2925,12 +2941,23 @@ export default function App() {
                   <div className="flex flex-col sm:flex-row gap-3">
                     <div className="relative">
                       <select 
-                        className="w-full sm:w-auto appearance-none bg-[#0A0A0F] border border-white/10 rounded-xl px-4 py-2.5 pr-10 text-white text-sm focus:outline-none focus:border-purple-500/50 transition-colors"
-                        defaultValue="06-2026"
+                        value={personalHistoryMonth}
+                        onChange={(e) => setPersonalHistoryMonth(e.target.value)}
+                        className="w-full sm:w-auto appearance-none bg-[#0A0A0F] border border-white/10 rounded-xl px-4 py-2.5 pr-10 text-white text-sm focus:outline-none focus:border-purple-500/50 transition-colors cursor-pointer"
                       >
+                        <option value="12-2026">Desember 2026</option>
+                        <option value="11-2026">November 2026</option>
+                        <option value="10-2026">Oktober 2026</option>
+                        <option value="09-2026">September 2026</option>
+                        <option value="08-2026">Agustus 2026</option>
+                        <option value="07-2026">Juli 2026</option>
                         <option value="06-2026">Juni 2026</option>
                         <option value="05-2026">Mei 2026</option>
                         <option value="04-2026">April 2026</option>
+                        <option value="03-2026">Maret 2026</option>
+                        <option value="02-2026">Februari 2026</option>
+                        <option value="01-2026">Januari 2026</option>
+                        <option value="all">Semua Data (Tahun Ajaran Aktif)</option>
                       </select>
                       <Calendar className="w-4 h-4 text-gray-400 absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none" />
                     </div>
@@ -2943,10 +2970,22 @@ export default function App() {
                           doc.setFontSize(11);
                           doc.text(`Nama : ${nama}`, 14, 32);
                           doc.text(`NIP  : ${nip}`, 14, 38);
-                          doc.text(`Bulan: Juni 2026`, 14, 44);
+
+                          let bulanLabel = 'Semua Data';
+                          if (personalHistoryMonth !== 'all') {
+                            const [m, y] = personalHistoryMonth.split('-');
+                            const nameMap: { [key: string]: string } = {
+                              '01': 'Januari', '02': 'Februari', '03': 'Maret', '04': 'April',
+                              '05': 'Mei', '06': 'Juni', '07': 'Juli', '08': 'Agustus',
+                              '09': 'September', '10': 'Oktober', '11': 'November', '12': 'Desember'
+                            };
+                            bulanLabel = `${nameMap[m] || ''} ${y}`;
+                          }
+
+                          doc.text(`Bulan: ${bulanLabel}`, 14, 44);
                           doc.text(`Dicetak pada: ${new Date().toLocaleDateString('id-ID')}`, 14, 50);
                           
-                          const tableData = teacherAttendanceHistory.map(h => [
+                          const tableData = filteredTeacherAttendanceHistory.map(h => [
                             h.date,
                             h.type || 'Absen',
                             h.time || '-',
@@ -2968,7 +3007,7 @@ export default function App() {
                           doc.text(schoolSettings.headmasterName, 130, finalY3 + 50);
                           doc.text(`NIP. ${schoolSettings.headmasterNip}`, 130, finalY3 + 56);
 
-                          doc.save(`Riwayat_Absen_${nama.replace(/[^a-zA-Z0-9]/g, '_')}_Juni_2026.pdf`);
+                          doc.save(`Riwayat_Absen_${nama.replace(/[^a-zA-Z0-9]/g, '_')}_${bulanLabel.replace(/[^a-zA-Z0-9]/g, '_')}.pdf`);
                           showNotification('Laporan PDF berhasil diunduh!', 'text-emerald-400');
                         }}
                         className="px-4 py-2.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 rounded-xl text-sm transition-all cursor-pointer flex items-center gap-2"
@@ -2982,12 +3021,24 @@ export default function App() {
                           const headers = ['Tanggal', 'Tipe Absen', 'Waktu Absen', 'Status', 'Jarak Absen'];
                           const csvContent = [
                             headers.join(','),
-                            ...teacherAttendanceHistory.map(h => `"${h.date}","${h.type || 'Absen'}","${h.time || '-'}","${h.status}","${h.location}"`)
+                            ...filteredTeacherAttendanceHistory.map(h => `"${h.date}","${h.type || 'Absen'}","${h.time || '-'}","${h.status}","${h.location}"`)
                           ].join('\n');
                           const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
                           const link = document.createElement('a');
                           link.href = URL.createObjectURL(blob);
-                          link.download = 'Riwayat_Absen_Bulanan.csv';
+                          
+                          let bulanLabel = 'Semua_Data';
+                          if (personalHistoryMonth !== 'all') {
+                            const [m, y] = personalHistoryMonth.split('-');
+                            const nameMap: { [key: string]: string } = {
+                              '01': 'Januari', '02': 'Februari', '03': 'Maret', '04': 'April',
+                              '05': 'Mei', '06': 'Juni', '07': 'Juli', '08': 'Agustus',
+                              '09': 'September', '10': 'Oktober', '11': 'November', '12': 'Desember'
+                            };
+                            bulanLabel = `${nameMap[m] || ''}_${y}`;
+                          }
+
+                          link.download = `Riwayat_Absen_${nama.replace(/[^a-zA-Z0-9]/g, '_')}_${bulanLabel}.csv`;
                           link.click();
                           showNotification('Laporan Excel (CSV) berhasil diunduh!', 'text-emerald-400');
                         }}
@@ -3011,19 +3062,19 @@ export default function App() {
                   <div className="bg-rose-500/10 border border-rose-500/20 rounded-2xl p-5">
                     <p className="text-rose-400 text-sm mb-1">Alpa</p>
                     <p className="text-2xl font-normal text-white">
-                      {teacherAttendanceHistory.filter(h => h.status === 'Alpa').length}
+                      {filteredTeacherAttendanceHistory.filter(h => h.status === 'Alpa').length}
                     </p>
                   </div>
                   <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-2xl p-5">
                     <p className="text-yellow-400 text-sm mb-1">Sakit</p>
                     <p className="text-2xl font-normal text-white">
-                      {teacherAttendanceHistory.filter(h => h.status === 'Sakit').length}
+                      {filteredTeacherAttendanceHistory.filter(h => h.status === 'Sakit').length}
                     </p>
                   </div>
                   <div className="bg-blue-500/10 border border-blue-500/20 rounded-2xl p-5">
                     <p className="text-blue-400 text-sm mb-1">Izin / Dinas</p>
                     <p className="text-2xl font-normal text-white">
-                      {teacherAttendanceHistory.filter(h => h.status === 'Izin' || h.status === 'Dinas').length}
+                      {filteredTeacherAttendanceHistory.filter(h => h.status === 'Izin' || h.status === 'Dinas').length}
                     </p>
                   </div>
                 </div>
@@ -3041,7 +3092,7 @@ export default function App() {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-white/5 text-sm">
-                        {teacherAttendanceHistory.map((history) => (
+                        {filteredTeacherAttendanceHistory.map((history) => (
                           <tr key={history.id} className="hover:bg-white/[0.02] transition-colors">
                             <td className="py-4 px-6 text-white font-normal">{history.date}</td>
                             <td className="py-4 px-6">
@@ -3100,12 +3151,16 @@ export default function App() {
                       >
                         <option value="VII A">Kelas VII A</option>
                         <option value="VII B">Kelas VII B</option>
+                        <option value="VII C">Kelas VII C</option>
+                        <option value="VII D">Kelas VII D</option>
                         <option value="VIII A">Kelas VIII A</option>
                         <option value="VIII B">Kelas VIII B</option>
                         <option value="VIII C">Kelas VIII C</option>
+                        <option value="VIII D">Kelas VIII D</option>
                         <option value="IX A">Kelas IX A</option>
                         <option value="IX B">Kelas IX B</option>
                         <option value="IX C">Kelas IX C</option>
+                        <option value="IX D">Kelas IX D</option>
                       </select>
                       <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500 pointer-events-none" />
                     </div>
@@ -7077,7 +7132,7 @@ export default function App() {
                             onChange={(e) => setRuangKelas(e.target.value)}
                             className="w-full bg-white/[0.03] border border-white/5 rounded-2xl pl-4 pr-10 py-3 text-base font-normal text-white focus:outline-none focus:border-amber-500/50 appearance-none cursor-pointer"
                           >
-                            {["VII - A", "VII - B", "VII - C", "VIII - A", "VIII - B", "VIII - C", "IX - A", "IX - B", "IX - C"].map((r) => (
+                            {["VII - A", "VII - B", "VII - C", "VII - D", "VIII - A", "VIII - B", "VIII - C", "VIII - D", "IX - A", "IX - B", "IX - C", "IX - D"].map((r) => (
                               <option key={r} value={r} className="bg-[#0a0a0f] text-white font-normal">{r}</option>
                             ))}
                           </select>
