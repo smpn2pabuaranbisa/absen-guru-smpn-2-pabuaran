@@ -80,6 +80,19 @@ function getDistanceFromLatLonInM(lat1: number, lon1: number, lat2: number, lon2
   return d * 1000; // Distance in m
 }
 
+function getScheduleForDate(dateStr: string | null | undefined, settings: any) {
+  const dateObj = dateStr ? new Date(dateStr) : new Date();
+  const dayIndex = dateObj.getDay();
+  if (settings.daySchedules && settings.daySchedules[dayIndex]) {
+    return settings.daySchedules[dayIndex];
+  }
+  return {
+    entryLimit: settings.entryLimit || "07:00",
+    exitLimit: settings.exitLimit || "15:00",
+    lateTolerance: settings.lateTolerance || 0
+  };
+}
+
 export default function App() {
   const [userRole, setUserRole] = useState<'guest' | 'guru' | 'siswa' | 'admin'>('guest');
   const [username, setUsername] = useState('');
@@ -210,6 +223,15 @@ export default function App() {
     entryLimit: "07:00",
     exitLimit: "15:00",
     lateTolerance: 15,
+    daySchedules: {
+      0: { entryLimit: "07:00", exitLimit: "15:00", lateTolerance: 15 }, // Minggu
+      1: { entryLimit: "07:00", exitLimit: "15:00", lateTolerance: 15 }, // Senin
+      2: { entryLimit: "07:00", exitLimit: "15:00", lateTolerance: 15 }, // Selasa
+      3: { entryLimit: "07:00", exitLimit: "15:00", lateTolerance: 15 }, // Rabu
+      4: { entryLimit: "07:00", exitLimit: "15:00", lateTolerance: 15 }, // Kamis
+      5: { entryLimit: "07:00", exitLimit: "11:10", lateTolerance: 15 }, // Jumat
+      6: { entryLimit: "07:00", exitLimit: "15:00", lateTolerance: 15 }, // Sabtu
+    },
     latitude: "-6.123456",
     longitude: "106.123456",
     maxRadius: 100,
@@ -513,11 +535,17 @@ export default function App() {
       else if (rec.type === 'Izin') status = 'Izin';
       else if (rec.type === 'Dinas') status = 'Dinas';
       else if (rec.type === 'Absen Datang') {
-        const [limitHour, limitMinute] = (schoolSettings.entryLimit || "07:00").split(':').map(Number);
-        const timeParts = rec.time ? rec.time.split('.') : [];
+        const schedule = getScheduleForDate(rec.date, schoolSettings);
+        const [limitHour, limitMinute] = schedule.entryLimit.split(':').map(Number);
+        const tolerance = schedule.lateTolerance || 0;
+        const totalLimitMinutes = limitHour * 60 + limitMinute + tolerance;
+        
+        const timeParts = rec.time ? rec.time.split(/[:.]/) : [];
         const hour = timeParts[0] ? parseInt(timeParts[0]) : 0;
         const minute = timeParts[1] ? parseInt(timeParts[1]) : 0;
-        if (hour > limitHour || (hour === limitHour && minute > limitMinute)) {
+        const totalMinutes = hour * 60 + minute;
+        
+        if (totalMinutes > totalLimitMinutes) {
           status = 'Terlambat';
         } else {
           status = 'Tepat Waktu';
@@ -549,7 +577,7 @@ export default function App() {
         location: distanceDisplay
       };
     });
-  }, [records, nip, schoolSettings.entryLimit]);
+  }, [records, nip, schoolSettings.entryLimit, schoolSettings.lateTolerance, schoolSettings.daySchedules]);
 
   const filteredTeacherAttendanceHistory = useMemo(() => {
     return teacherAttendanceHistory.filter(h => {
@@ -632,11 +660,17 @@ export default function App() {
         photo = datangRec.photo || null;
         distance = datangRec.distance;
         
-        const [limitHour, limitMinute] = (schoolSettings.entryLimit || "07:00").split(':').map(Number);
+        const schedule = getScheduleForDate(datangRec.date, schoolSettings);
+        const [limitHour, limitMinute] = schedule.entryLimit.split(':').map(Number);
+        const tolerance = schedule.lateTolerance || 0;
+        const totalLimitMinutes = limitHour * 60 + limitMinute + tolerance;
+        
         const timeParts = datangRec.time ? datangRec.time.split(/[:.]/) : [];
         const hour = timeParts[0] ? parseInt(timeParts[0]) : 0;
         const minute = timeParts[1] ? parseInt(timeParts[1]) : 0;
-        if (hour > limitHour || (hour === limitHour && minute > limitMinute)) {
+        const totalMinutes = hour * 60 + minute;
+        
+        if (totalMinutes > totalLimitMinutes) {
           recordStatus = 'Terlambat';
         } else {
           recordStatus = 'Tepat Waktu';
@@ -657,7 +691,7 @@ export default function App() {
         distance
       };
     });
-  }, [teachers, records, izinRequests, schoolSettings.entryLimit]);
+  }, [teachers, records, izinRequests, schoolSettings.entryLimit, schoolSettings.lateTolerance, schoolSettings.daySchedules]);
 
   const filteredTeachersToday = useMemo(() => {
     const list = mappedTeachersToday.filter(teacher => {
@@ -1504,12 +1538,13 @@ export default function App() {
         return;
       }
 
-      const [limitHour, limitMinute] = schoolSettings.exitLimit.split(':').map(Number);
+      const schedule = getScheduleForDate(null, schoolSettings);
+      const [limitHour, limitMinute] = schedule.exitLimit.split(':').map(Number);
       if (!isNaN(limitHour) && !isNaN(limitMinute)) {
         const currentHour = now.getHours();
         const currentMinute = now.getMinutes();
         if (currentHour < limitHour || (currentHour === limitHour && currentMinute < limitMinute)) {
-          showNotification(`Gagal: Belum waktunya absen pulang. Sesuai jam kerja, absen pulang dimulai pukul ${schoolSettings.exitLimit}.`, 'text-rose-400');
+          showNotification(`Gagal: Belum waktunya absen pulang. Sesuai jam kerja, absen pulang dimulai pukul ${schedule.exitLimit}.`, 'text-rose-400');
           return;
         }
       }
@@ -1552,12 +1587,13 @@ export default function App() {
     if (modalState.type) {
       if (modalState.type.id === 'pulang') {
         const now = new Date();
-        const [limitHour, limitMinute] = schoolSettings.exitLimit.split(':').map(Number);
+        const schedule = getScheduleForDate(null, schoolSettings);
+        const [limitHour, limitMinute] = schedule.exitLimit.split(':').map(Number);
         if (!isNaN(limitHour) && !isNaN(limitMinute)) {
           const currentHour = now.getHours();
           const currentMinute = now.getMinutes();
           if (currentHour < limitHour || (currentHour === limitHour && currentMinute < limitMinute)) {
-            showNotification(`Gagal: Belum waktunya absen pulang. Sesuai jam kerja, absen pulang dimulai pukul ${schoolSettings.exitLimit}.`, 'text-rose-400');
+            showNotification(`Gagal: Belum waktunya absen pulang. Sesuai jam kerja, absen pulang dimulai pukul ${schedule.exitLimit}.`, 'text-rose-400');
             return;
           }
         }
@@ -4744,7 +4780,7 @@ export default function App() {
                     }}>
                       <div className="grid grid-cols-2 gap-5">
                         <div className="space-y-2">
-                          <label className="text-xs text-gray-400 ml-1">Batas Jam Masuk</label>
+                          <label className="text-xs text-gray-400 ml-1">Default Jam Masuk</label>
                           <input 
                             type="time" 
                             value={schoolSettings.entryLimit}
@@ -4753,7 +4789,7 @@ export default function App() {
                           />
                         </div>
                         <div className="space-y-2">
-                          <label className="text-xs text-gray-400 ml-1">Batas Jam Pulang</label>
+                          <label className="text-xs text-gray-400 ml-1">Default Jam Pulang</label>
                           <input 
                             type="time" 
                             value={schoolSettings.exitLimit}
@@ -4764,7 +4800,7 @@ export default function App() {
                       </div>
 
                       <div className="space-y-2">
-                        <label className="text-xs text-gray-400 ml-1">Toleransi Keterlambatan (Menit)</label>
+                        <label className="text-xs text-gray-400 ml-1">Toleransi Keterlambatan Default (Menit)</label>
                         <input 
                           type="number" 
                           value={schoolSettings.lateTolerance}
@@ -4773,6 +4809,61 @@ export default function App() {
                           className="w-full px-4 py-3 bg-[#05050A] border border-white/10 rounded-xl text-sm text-white outline-none focus:border-blue-500/50"
                         />
                         <p className="text-[10px] text-gray-500 ml-1 mt-1">Siswa/Guru dianggap terlambat jika absen melebihi batas jam masuk + toleransi.</p>
+                      </div>
+
+                      <div className="mt-6 pt-6 border-t border-white/5 space-y-4">
+                        <label className="text-sm text-gray-300 font-medium ml-1">Jadwal Spesifik Per Hari</label>
+                        <div className="space-y-2">
+                          {[
+                            { id: 1, name: 'Senin' },
+                            { id: 2, name: 'Selasa' },
+                            { id: 3, name: 'Rabu' },
+                            { id: 4, name: 'Kamis' },
+                            { id: 5, name: 'Jumat' },
+                            { id: 6, name: 'Sabtu' },
+                            { id: 0, name: 'Minggu' }
+                          ].map(day => (
+                            <div key={day.id} className="grid grid-cols-1 md:grid-cols-3 gap-3 items-center bg-[#05050A] border border-white/5 p-3 rounded-xl">
+                              <div className="text-sm text-gray-400 font-medium md:pl-2">{day.name}</div>
+                              <div className="space-y-1">
+                                <label className="text-[10px] text-gray-500">Jam Masuk</label>
+                                <input 
+                                  type="time" 
+                                  value={schoolSettings.daySchedules?.[day.id as keyof typeof schoolSettings.daySchedules]?.entryLimit || schoolSettings.entryLimit}
+                                  onChange={(e) => {
+                                    const newSchedules = { ...(schoolSettings.daySchedules || {}) };
+                                    if (!newSchedules[day.id as keyof typeof schoolSettings.daySchedules]) {
+                                      // @ts-ignore
+                                      newSchedules[day.id as keyof typeof schoolSettings.daySchedules] = { entryLimit: schoolSettings.entryLimit, exitLimit: schoolSettings.exitLimit, lateTolerance: schoolSettings.lateTolerance };
+                                    }
+                                    // @ts-ignore
+                                    newSchedules[day.id as keyof typeof schoolSettings.daySchedules].entryLimit = e.target.value;
+                                    setSchoolSettings(prev => ({ ...prev, daySchedules: newSchedules as any }));
+                                  }}
+                                  className="w-full px-3 py-2 bg-white/[0.02] border border-white/10 rounded-lg text-sm text-white outline-none focus:border-blue-500/50"
+                                />
+                              </div>
+                              <div className="space-y-1">
+                                <label className="text-[10px] text-gray-500">Jam Pulang</label>
+                                <input 
+                                  type="time" 
+                                  value={schoolSettings.daySchedules?.[day.id as keyof typeof schoolSettings.daySchedules]?.exitLimit || schoolSettings.exitLimit}
+                                  onChange={(e) => {
+                                    const newSchedules = { ...(schoolSettings.daySchedules || {}) };
+                                    if (!newSchedules[day.id as keyof typeof schoolSettings.daySchedules]) {
+                                      // @ts-ignore
+                                      newSchedules[day.id as keyof typeof schoolSettings.daySchedules] = { entryLimit: schoolSettings.entryLimit, exitLimit: schoolSettings.exitLimit, lateTolerance: schoolSettings.lateTolerance };
+                                    }
+                                    // @ts-ignore
+                                    newSchedules[day.id as keyof typeof schoolSettings.daySchedules].exitLimit = e.target.value;
+                                    setSchoolSettings(prev => ({ ...prev, daySchedules: newSchedules as any }));
+                                  }}
+                                  className="w-full px-3 py-2 bg-white/[0.02] border border-white/10 rounded-lg text-sm text-white outline-none focus:border-blue-500/50"
+                                />
+                              </div>
+                            </div>
+                          ))}
+                        </div>
                       </div>
 
                       <div className="pt-2">
