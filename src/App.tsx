@@ -84,7 +84,10 @@ function getScheduleForDate(dateStr: string | null | undefined, settings: any) {
   const dateObj = dateStr ? new Date(dateStr) : new Date();
   const dayIndex = dateObj.getDay();
   if (settings.daySchedules && settings.daySchedules[dayIndex]) {
-    return settings.daySchedules[dayIndex];
+    return {
+      ...settings.daySchedules[dayIndex],
+      lateTolerance: settings.lateTolerance || 0 // Selalu gunakan toleransi global
+    };
   }
   return {
     entryLimit: settings.entryLimit || "07:00",
@@ -2917,8 +2920,8 @@ export default function App() {
                       <Plus className="w-4 h-4" />
                       <span className="text-sm">Tambah Jadwal</span>
                     </button>
-                    <div className="flex bg-white/5 rounded-xl p-1 border border-white/10 w-fit">
-                      {['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat'].map((day) => (
+                    <div className="flex bg-white/5 rounded-xl p-1 border border-white/10 w-fit overflow-x-auto">
+                      {['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'].map((day) => (
                         <button
                           key={day}
                           onClick={() => setScheduleDay(day)}
@@ -4778,29 +4781,8 @@ export default function App() {
                       saveSystemSettingsSync(schoolSettings);
                       showNotification('Pengaturan jam kerja berhasil disimpan!', 'text-emerald-400');
                     }}>
-                      <div className="grid grid-cols-2 gap-5">
-                        <div className="space-y-2">
-                          <label className="text-xs text-gray-400 ml-1">Default Jam Masuk</label>
-                          <input 
-                            type="time" 
-                            value={schoolSettings.entryLimit}
-                            onChange={(e) => setSchoolSettings(prev => ({...prev, entryLimit: e.target.value}))}
-                            className="w-full px-4 py-3 bg-[#05050A] border border-white/10 rounded-xl text-sm text-white outline-none focus:border-blue-500/50"
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <label className="text-xs text-gray-400 ml-1">Default Jam Pulang</label>
-                          <input 
-                            type="time" 
-                            value={schoolSettings.exitLimit}
-                            onChange={(e) => setSchoolSettings(prev => ({...prev, exitLimit: e.target.value}))}
-                            className="w-full px-4 py-3 bg-[#05050A] border border-white/10 rounded-xl text-sm text-white outline-none focus:border-blue-500/50"
-                          />
-                        </div>
-                      </div>
-
                       <div className="space-y-2">
-                        <label className="text-xs text-gray-400 ml-1">Toleransi Keterlambatan Default (Menit)</label>
+                        <label className="text-xs text-gray-400 ml-1">Toleransi Keterlambatan (Menit)</label>
                         <input 
                           type="number" 
                           value={schoolSettings.lateTolerance}
@@ -4811,8 +4793,8 @@ export default function App() {
                         <p className="text-[10px] text-gray-500 ml-1 mt-1">Siswa/Guru dianggap terlambat jika absen melebihi batas jam masuk + toleransi.</p>
                       </div>
 
-                      <div className="mt-6 pt-6 border-t border-white/5 space-y-4">
-                        <label className="text-sm text-gray-300 font-medium ml-1">Jadwal Spesifik Per Hari</label>
+                      <div className="mt-6 space-y-4">
+                        <label className="text-sm text-gray-300 font-medium ml-1">Jadwal Per Hari</label>
                         <div className="space-y-2">
                           {[
                             { id: 1, name: 'Senin' },
@@ -4820,8 +4802,7 @@ export default function App() {
                             { id: 3, name: 'Rabu' },
                             { id: 4, name: 'Kamis' },
                             { id: 5, name: 'Jumat' },
-                            { id: 6, name: 'Sabtu' },
-                            { id: 0, name: 'Minggu' }
+                            { id: 6, name: 'Sabtu' }
                           ].map(day => (
                             <div key={day.id} className="grid grid-cols-1 md:grid-cols-3 gap-3 items-center bg-[#05050A] border border-white/5 p-3 rounded-xl">
                               <div className="text-sm text-gray-400 font-medium md:pl-2">{day.name}</div>
@@ -6336,6 +6317,7 @@ export default function App() {
                   <option value="Rabu">Rabu</option>
                   <option value="Kamis">Kamis</option>
                   <option value="Jumat">Jumat</option>
+                  <option value="Sabtu">Sabtu</option>
                 </select>
               </div>
               <div>
@@ -6760,7 +6742,7 @@ export default function App() {
       {/* Edit Teacher Modal */}
       {showEditTeacherModal && editingTeacher && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 z-[105] animate-[fadeIn_0.2s_ease-out]">
-          <div className="bg-[#0D0D19] border border-white/10 rounded-3xl p-6 w-full max-w-md relative shadow-2xl">
+          <div className="bg-[#0D0D19] border border-white/10 rounded-3xl p-6 w-full max-w-md relative shadow-2xl max-h-[90vh] overflow-y-auto">
             <h5 className="font-normal text-white text-lg mb-4">Edit Data Guru / Staff</h5>
             <div className="space-y-4">
               <div>
@@ -6856,7 +6838,7 @@ export default function App() {
       {/* Edit Profile Modal (for Guru) */}
       {showEditProfileModal && editingProfileData && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 z-[105] animate-[fadeIn_0.2s_ease-out]">
-          <div className="bg-[#0D0D19] border border-white/10 rounded-3xl p-6 w-full max-w-md relative shadow-2xl">
+          <div className="bg-[#0D0D19] border border-white/10 rounded-3xl p-6 w-full max-w-md relative shadow-2xl max-h-[90vh] overflow-y-auto">
             <h5 className="font-normal text-white text-lg mb-4">Edit Profil Anda</h5>
             <div className="space-y-4">
               <div>
@@ -7400,37 +7382,29 @@ export default function App() {
                       })}
                     </div>
 
-                    {/* Dropdowns for dates */}
+                    {/* Date Pickers */}
                     <div className="grid grid-cols-2 gap-3">
                       <div className="space-y-1.5">
                         <span className="text-[10px] font-normal tracking-wider text-gray-500 uppercase">TANGGAL MULAI</span>
                         <div className="relative">
-                          <select 
+                          <input 
+                            type="date"
                             value={izinMulai} 
                             onChange={(e) => setIzinMulai(e.target.value)}
-                            className="w-full bg-white/[0.03] border border-white/5 rounded-2xl pl-4 pr-10 py-3.5 text-sm font-normal text-white focus:outline-none focus:border-indigo-500/50 appearance-none cursor-pointer"
-                          >
-                            {["Senin, 29 Juni", "Selasa, 30 Juni", "Rabu, 01 Juli", "Kamis, 02 Juli", "Jumat, 03 Juli", "Sabtu, 04 Juli"].map((d) => (
-                              <option key={d} value={d} className="bg-[#0a0a0f] text-white font-normal">{d}</option>
-                            ))}
-                          </select>
-                          <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+                            className="w-full bg-white/[0.03] border border-white/5 rounded-2xl px-4 py-3.5 text-sm font-normal text-white focus:outline-none focus:border-indigo-500/50 appearance-none cursor-pointer [color-scheme:dark]"
+                          />
                         </div>
                       </div>
 
                       <div className="space-y-1.5">
                         <span className="text-[10px] font-normal tracking-wider text-gray-500 uppercase">TANGGAL SELESAI</span>
                         <div className="relative">
-                          <select 
+                          <input 
+                            type="date"
                             value={izinSelesai} 
                             onChange={(e) => setIzinSelesai(e.target.value)}
-                            className="w-full bg-white/[0.03] border border-white/5 rounded-2xl pl-4 pr-10 py-3.5 text-sm font-normal text-white focus:outline-none focus:border-indigo-500/50 appearance-none cursor-pointer"
-                          >
-                            {["Senin, 29 Juni", "Selasa, 30 Juni", "Rabu, 01 Juli", "Kamis, 02 Juli", "Jumat, 03 Juli", "Sabtu, 04 Juli", "Senin, 06 Juli"].map((d) => (
-                              <option key={d} value={d} className="bg-[#0a0a0f] text-white font-normal">{d}</option>
-                            ))}
-                          </select>
-                          <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+                            className="w-full bg-white/[0.03] border border-white/5 rounded-2xl px-4 py-3.5 text-sm font-normal text-white focus:outline-none focus:border-indigo-500/50 appearance-none cursor-pointer [color-scheme:dark]"
+                          />
                         </div>
                       </div>
                     </div>
