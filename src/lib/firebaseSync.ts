@@ -5,7 +5,8 @@ import {
   setDoc, 
   deleteDoc, 
   updateDoc,
-  getDoc
+  getDoc,
+  writeBatch
 } from 'firebase/firestore';
 import { db } from './firebase';
 
@@ -41,11 +42,27 @@ export async function getTeachersSync(defaultTeachers: any[]): Promise<any[]> {
 }
 
 export async function saveTeacherSync(teacher: any): Promise<void> {
-  await setDoc(doc(db, 'teachers', teacher.nip), teacher);
+  const docId = String(teacher.nip).replace(/\//g, '_');
+  await setDoc(doc(db, 'teachers', docId), teacher);
+}
+
+export async function saveTeachersSyncBatch(teachers: any[]): Promise<void> {
+  const chunkSize = 500;
+  for (let i = 0; i < teachers.length; i += chunkSize) {
+    const chunk = teachers.slice(i, i + chunkSize);
+    const batch = writeBatch(db);
+    chunk.forEach(teacher => {
+      const docId = String(teacher.nip).replace(/\//g, '_');
+      const docRef = doc(db, 'teachers', docId);
+      batch.set(docRef, teacher);
+    });
+    await batch.commit();
+  }
 }
 
 export async function deleteTeacherSync(nip: string): Promise<void> {
-  await deleteDoc(doc(db, 'teachers', nip));
+  const docId = String(nip).replace(/\//g, '_');
+  await deleteDoc(doc(db, 'teachers', docId));
 }
 
 // 2. Students Sync
@@ -54,11 +71,27 @@ export async function getStudentsSync(defaultStudents: any[]): Promise<any[]> {
 }
 
 export async function saveStudentSync(student: any): Promise<void> {
-  await setDoc(doc(db, 'students', student.nis), student);
+  const docId = String(student.nis).replace(/\//g, '_');
+  await setDoc(doc(db, 'students', docId), student);
+}
+
+export async function saveStudentsSyncBatch(students: any[]): Promise<void> {
+  const chunkSize = 500;
+  for (let i = 0; i < students.length; i += chunkSize) {
+    const chunk = students.slice(i, i + chunkSize);
+    const batch = writeBatch(db);
+    chunk.forEach(student => {
+      const docId = String(student.nis).replace(/\//g, '_');
+      const docRef = doc(db, 'students', docId);
+      batch.set(docRef, student);
+    });
+    await batch.commit();
+  }
 }
 
 export async function deleteStudentSync(nis: string): Promise<void> {
-  await deleteDoc(doc(db, 'students', nis));
+  const docId = String(nis).replace(/\//g, '_');
+  await deleteDoc(doc(db, 'students', docId));
 }
 
 // 3. Student Records Sync (Scan Presensi)

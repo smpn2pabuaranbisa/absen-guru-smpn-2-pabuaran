@@ -20,6 +20,8 @@ import {
   getStudentsSync,
   saveStudentSync,
   deleteStudentSync,
+  saveStudentsSyncBatch,
+  saveTeachersSyncBatch,
   getStudentRecordsSync,
   saveStudentRecordSync,
   getTeachingSessionsSync,
@@ -1876,7 +1878,7 @@ export default function App() {
 
             if (newTeachers.length > 0) {
               setTeachers(prev => [...newTeachers, ...prev]);
-              newTeachers.forEach(saveTeacherSync);
+              saveTeachersSyncBatch(newTeachers).catch(console.error);
               showNotification(`Berhasil mengunggah ${newTeachers.length} data pegawai/staf`, 'text-emerald-400');
             } else {
               showNotification('Format data CSV Pegawai tidak sesuai atau kosong. Pastikan berisi Nama, NIP, Mapel, Jabatan, Status.', 'text-rose-400');
@@ -1936,7 +1938,7 @@ export default function App() {
 
             if (newStudents.length > 0) {
               setStudents(prev => [...newStudents, ...prev]);
-              newStudents.forEach(saveStudentSync);
+              saveStudentsSyncBatch(newStudents).catch(console.error);
               showNotification(`Berhasil mengunggah ${newStudents.length} data siswa`, 'text-blue-400');
             } else {
               showNotification('Format data CSV Siswa tidak sesuai atau kosong. Pastikan berisi Nama, NIS, dan Kelas.', 'text-rose-400');
@@ -2209,7 +2211,7 @@ export default function App() {
     };
   }, [activeTab]);
 
-  const executeStudentScan = (inputVal: string) => {
+  const executeStudentScan = (inputVal: string, overrideStatus?: string) => {
     const trimmed = inputVal.trim();
     if (!trimmed) return false;
 
@@ -2276,7 +2278,7 @@ export default function App() {
           nis: found.nis,
           kelas: found.kelas,
           time: recordTimeStr,
-          status: 'Hadir',
+          status: overrideStatus || 'Hadir',
           sessionId: activeSessionId,
           mapel: activeSessionMapel,
           guru: activeSessionGuru,
@@ -3646,30 +3648,42 @@ export default function App() {
                         <input
                           ref={scanInputRef}
                           type="text"
-                          placeholder="Arahkan barcode / ketik NIS atau Nama lalu Enter..."
+                          placeholder="Arahkan barcode / ketik NIS atau Nama lalu Enter untuk Hadir..."
                           value={manualNis}
                           onChange={(e) => setManualNis(e.target.value)}
                           onKeyDown={(e) => {
                             if (e.key === 'Enter') {
-                              executeStudentScan(manualNis);
+                              executeStudentScan(manualNis, 'Hadir');
                               setManualNis('');
                             }
                           }}
-                          className="w-full pl-12 pr-28 py-4 bg-[#05050A]/80 border border-white/10 rounded-2xl text-sm text-white placeholder-gray-500 outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/20 transition-all font-mono"
+                          className="w-full pl-12 pr-4 py-4 bg-[#05050A]/80 border border-white/10 rounded-2xl text-sm text-white placeholder-gray-500 outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/20 transition-all font-mono"
                         />
-                        <button
-                          onClick={() => {
-                            executeStudentScan(manualNis);
-                            setManualNis('');
-                          }}
-                          className="absolute right-2.5 top-1/2 -translate-y-1/2 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white font-normal text-xs rounded-xl transition-all cursor-pointer"
-                        >
-                          Absen
-                        </button>
                       </div>
 
+                      {manualNis.trim().length > 0 && (
+                        <div className="flex gap-2 justify-center mt-2 animate-in fade-in slide-in-from-top-2">
+                          <button
+                            onClick={() => { executeStudentScan(manualNis, 'Hadir'); setManualNis(''); }}
+                            className="px-4 py-2 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-400 border border-emerald-500/30 rounded-xl text-xs font-medium transition-all cursor-pointer"
+                          >Hadir</button>
+                          <button
+                            onClick={() => { executeStudentScan(manualNis, 'Sakit'); setManualNis(''); }}
+                            className="px-4 py-2 bg-amber-500/20 hover:bg-amber-500/30 text-amber-400 border border-amber-500/30 rounded-xl text-xs font-medium transition-all cursor-pointer"
+                          >Sakit</button>
+                          <button
+                            onClick={() => { executeStudentScan(manualNis, 'Izin'); setManualNis(''); }}
+                            className="px-4 py-2 bg-blue-500/20 hover:bg-blue-500/30 text-blue-400 border border-blue-500/30 rounded-xl text-xs font-medium transition-all cursor-pointer"
+                          >Izin</button>
+                          <button
+                            onClick={() => { executeStudentScan(manualNis, 'Alpa'); setManualNis(''); }}
+                            className="px-4 py-2 bg-rose-500/20 hover:bg-rose-500/30 text-rose-400 border border-rose-500/30 rounded-xl text-xs font-medium transition-all cursor-pointer"
+                          >Alpa</button>
+                        </div>
+                      )}
+
                       <p className="text-[10px] text-gray-500 text-center leading-normal">
-                        💡 Scanner ini <span className="text-blue-400 font-normal">Selalu Siaga</span>. Ketik NIS siswa di atas untuk merekam presensi.
+                        💡 Scanner ini <span className="text-blue-400 font-normal">Selalu Siaga</span>. Ketik NIS siswa di atas untuk merekam presensi manual.
                       </p>
 
                       <div className="flex justify-center pt-1 pb-2">
