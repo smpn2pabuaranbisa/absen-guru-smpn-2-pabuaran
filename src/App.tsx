@@ -43,7 +43,8 @@ import {
   savePiketScheduleSync,
   getClassSubstitutionsSync,
   saveClassSubstitutionSync,
-  deleteClassSubstitutionSync
+  deleteClassSubstitutionSync,
+  initialSyncWithGoogleSheets
 } from './lib/firebaseSync';
 
 type AttendanceRecord = {
@@ -220,6 +221,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<string>('dashboard');
   const [isLoading, setIsLoading] = useState(true);
   const [schoolSettings, setSchoolSettings] = useState({
+    appsScriptUrl: "https://script.google.com/macros/s/AKfycbyulNiQG-YcSXqe1SyaaQbfEg32BaNcdt7IaaNAY-DL2dZhhujnfjYMiYFy0Fwlc7M4sA/exec",
     schoolName: "SMPN 2 Pabuaran",
     academicYear: "2026/2027",
     headmasterName: "Drs. H. Ahmad Sunarya, M.Pd",
@@ -1054,6 +1056,9 @@ export default function App() {
     async function loadFirebaseData() {
       setIsLoading(true);
       try {
+        // Lakukan sinkronisasi penuh dengan Google Sheets terlebih dahulu jika URL diatur
+        await initialSyncWithGoogleSheets();
+
         const loadedTeachers = await getTeachersSync(teachers);
         setTeachers(loadedTeachers);
 
@@ -5142,6 +5147,131 @@ export default function App() {
                     </div>
                   </div>
 
+                  {/* Integrasi Google Spreadsheet & Apps Script */}
+                  <div id="google-sheets-integration" className="bg-white/[0.02] border border-white/10 rounded-3xl p-6 md:p-8 lg:col-span-2 relative overflow-hidden">
+                    <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/[0.02] rounded-full blur-3xl"></div>
+                    <div className="flex items-center gap-4 mb-6">
+                      <div className="w-12 h-12 rounded-2xl bg-blue-500/10 flex items-center justify-center">
+                        <FileSpreadsheet className="w-6 h-6 text-blue-400" />
+                      </div>
+                      <div>
+                        <h3 className="text-xl font-normal text-white">Integrasi Google Spreadsheet (GAS)</h3>
+                        <p className="text-sm text-gray-400 mt-1">Gunakan Google Sheets sebagai basis data awan Anda menggantikan Firebase.</p>
+                      </div>
+                    </div>
+
+                    <div className="space-y-6">
+                      <div className="p-4 bg-[#05050A] border border-white/5 rounded-2xl space-y-4">
+                        <div className="flex flex-col md:flex-row md:items-center justify-between gap-2 border-b border-white/5 pb-3">
+                          <div>
+                            <span className="text-xs text-gray-400">Status Sinkronisasi</span>
+                            <div className="flex items-center gap-2 mt-0.5">
+                              {schoolSettings.appsScriptUrl ? (
+                                <>
+                                  <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+                                  <span className="text-sm text-emerald-400 font-medium">Terkoneksi ke Google Sheets</span>
+                                </>
+                              ) : (
+                                <>
+                                  <div className="w-2.5 h-2.5 rounded-full bg-amber-500" />
+                                  <span className="text-sm text-amber-400 font-medium">Mode Lokal (Local Cache / Offline)</span>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                          
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              if (!schoolSettings.appsScriptUrl) {
+                                showNotification('Harap masukkan URL Google Apps Script terlebih dahulu!', 'text-amber-400');
+                                return;
+                              }
+                              showNotification('Sedang mensinkronisasikan seluruh data...', 'text-white');
+                              localStorage.setItem('appsScriptUrl', schoolSettings.appsScriptUrl);
+                              const ok = await initialSyncWithGoogleSheets();
+                              if (ok) {
+                                showNotification('Sinkronisasi penuh Google Sheets BERHASIL! Me-refresh halaman...', 'text-emerald-400');
+                                setTimeout(() => window.location.reload(), 1500);
+                              } else {
+                                showNotification('Gagal terhubung ke Google Apps Script. Periksa kembali URL Anda.', 'text-rose-400');
+                              }
+                            }}
+                            className="px-4 py-2 bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 border border-blue-500/20 rounded-xl text-xs font-medium cursor-pointer transition-all flex items-center gap-2 self-start md:self-auto"
+                          >
+                            <Download className="w-3.5 h-3.5" />
+                            Tes Koneksi & Ambil Data Cloud
+                          </button>
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-xs text-gray-400 ml-1">URL Google Apps Script Web App</label>
+                          <input 
+                            type="text" 
+                            placeholder="https://script.google.com/macros/s/.../exec"
+                            value={schoolSettings.appsScriptUrl || ''}
+                            onChange={(e) => setSchoolSettings(prev => ({...prev, appsScriptUrl: e.target.value.trim()}))}
+                            className="w-full px-4 py-3 bg-[#05050A] border border-white/10 rounded-xl text-sm text-white outline-none focus:border-blue-500/50"
+                          />
+                          <p className="text-[10px] text-gray-500 ml-1 mt-1">Masukkan URL Aplikasi Web yang Anda peroleh setelah melakukan "Deploy" / "Penerapan Baru" sebagai Web App di Google Apps Script.</p>
+                        </div>
+                      </div>
+
+                      {/* COPYABLE GOOGLE APPS SCRIPT CODE */}
+                      <div className="bg-[#05050A] border border-white/5 rounded-2xl p-5 space-y-4">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <h4 className="text-xs font-medium text-white uppercase tracking-wider">Kode Google Apps Script</h4>
+                            <p className="text-[10px] text-gray-400 mt-0.5">Salin kode ini ke editor Google Apps Script di Google Sheets Anda.</p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const code = getGoogleAppsScriptCode();
+                              navigator.clipboard.writeText(code);
+                              showNotification('Kode Apps Script berhasil disalin ke clipboard!', 'text-emerald-400');
+                            }}
+                            className="px-3 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 text-[10px] text-gray-300 rounded-lg cursor-pointer transition-all"
+                          >
+                            Salin Kode
+                          </button>
+                        </div>
+
+                        <div className="bg-[#020204] border border-white/5 rounded-xl p-3 max-h-48 overflow-y-auto">
+                          <pre className="text-[9px] text-gray-400 font-mono leading-relaxed select-all">
+                            {getGoogleAppsScriptCode()}
+                          </pre>
+                        </div>
+
+                        <div className="text-[11px] text-gray-400 space-y-2 leading-relaxed bg-blue-500/5 border border-blue-500/10 p-3 rounded-xl">
+                          <p className="font-medium text-blue-400">📋 Langkah-Langkah Pemasangan:</p>
+                          <ol className="list-decimal list-inside space-y-1 text-gray-300">
+                            <li>Buat lembar bentang baru di <a href="https://sheets.new" target="_blank" rel="noopener noreferrer" className="text-blue-400 underline">Google Sheets</a>.</li>
+                            <li>Buka menu <span className="font-semibold text-white">Ekstensi (Extensions)</span> &gt; <span className="font-semibold text-white">Apps Script</span>.</li>
+                            <li>Hapus semua kode bawaan, lalu <span className="font-semibold text-white">Tempel (Paste)</span> kode di atas.</li>
+                            <li>Klik tombol <span className="font-semibold text-white">Simpan (Save)</span> (ikon disket).</li>
+                            <li>Klik tombol <span className="font-semibold text-white">Terapkan (Deploy)</span> &gt; <span className="font-semibold text-white">Penerapan baru (New deployment)</span>.</li>
+                            <li>Pilih jenis <span className="font-semibold text-white">Aplikasi web (Web app)</span>. Isikan Deskripsi, Jalankan sebagai <span className="font-semibold text-white">Saya (Me)</span>, dan akses ke <span className="font-semibold text-white">Siapa saja (Anyone)</span>.</li>
+                            <li>Klik <span className="font-semibold text-white">Terapkan</span>, setujui izin akun Google Anda, lalu salin URL Web App yang muncul.</li>
+                            <li>Tempelkan URL tersebut ke kolom di atas dan klik tombol <span className="font-semibold text-white">Simpan Semua Pengaturan</span>.</li>
+                          </ol>
+                        </div>
+                      </div>
+
+                      <div className="pt-2">
+                        <button 
+                          onClick={() => {
+                            saveSystemSettingsSync(schoolSettings);
+                            showNotification('Pengaturan Google Sheets berhasil disimpan!', 'text-emerald-400');
+                          }}
+                          className="w-full py-3.5 bg-blue-500/10 text-blue-400 font-medium rounded-xl hover:bg-blue-500/20 border border-blue-500/20 transition-colors cursor-pointer"
+                        >
+                          Simpan Semua Pengaturan Google Sheets
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
                   {/* Pembersihan & Manajemen Data */}
                   <div className="bg-white/[0.02] border border-white/10 rounded-3xl p-6 md:p-8 lg:col-span-2 relative overflow-hidden">
                     <div className="absolute top-0 right-0 w-32 h-32 bg-rose-500/[0.02] rounded-full blur-3xl"></div>
@@ -7183,7 +7313,7 @@ export default function App() {
                 /* REGULAR HEADER FOR ABSEN */
                 <div className="p-5 border-b border-white/10 bg-white/5 flex items-center gap-3">
                   <div className={`p-2 rounded-xl bg-black/50 ${modalState.type.glow}`}>
-                    <modalState.type.icon className={`w-5 h-5 ${modalState.type.color}`} />
+                    {getIcon(modalState.type.iconName, `w-5 h-5 ${modalState.type.color}`)}
                   </div>
                   <div>
                     <h3 className="font-normal text-lg text-white">{modalState.type.label}</h3>
@@ -7657,5 +7787,305 @@ export default function App() {
       `}</style>
     </div>
   );
+}
+
+function getGoogleAppsScriptCode(): string {
+  return `/**
+ * GOOGLE APPS SCRIPT - SINKRONISASI ABSENSI SEKOLAH
+ * 
+ * Petunjuk Penyebaran (Deployment):
+ * 1. Buka Google Sheets baru di https://sheets.new
+ * 2. Klik menu 'Ekstensi' -> 'Apps Script'.
+ * 3. Hapus semua kode default, lalu tempelkan seluruh kode ini.
+ * 4. Klik ikon Simpan (disket).
+ * 5. Klik tombol 'Terapkan' (Deploy) -> 'Penerapan baru' (New deployment).
+ * 6. Pilih jenis penerapan: 'Aplikasi web' (Web app).
+ * 7. Konfigurasikan:
+ *    - Deskripsi: Absensi Sync
+ *    - Jalankan sebagai: Saya (email Anda)
+ *    - Siapa yang memiliki akses: Siapa saja (Anyone) -> SANGAT PENTING!
+ * 8. Klik 'Terapkan' (Deploy), setujui izin akun Google Anda.
+ * 9. Salin URL Aplikasi Web yang diberikan, lalu tempel di kolom "URL Google Apps Script" di Pengaturan Sistem aplikasi ini.
+ */
+
+function doPost(e) {
+  try {
+    const payload = JSON.parse(e.postData.contents);
+    const action = payload.action;
+    const collection = payload.collection;
+    const key = payload.key;
+    const data = payload.data;
+    const id = payload.id;
+    
+    let responseData = null;
+    
+    if (action === 'getAll') {
+      responseData = getAllCollections();
+    } else if (action === 'saveItem') {
+      saveItem(collection, key, data);
+      responseData = { status: 'success' };
+    } else if (action === 'saveBatch') {
+      saveBatch(collection, data);
+      responseData = { status: 'success' };
+    } else if (action === 'deleteItem') {
+      deleteItem(collection, key, id);
+      responseData = { status: 'success' };
+    } else if (action === 'clearCollection') {
+      clearCollection(collection);
+      responseData = { status: 'success' };
+    } else if (action === 'saveSettings') {
+      saveSettings(data);
+      responseData = { status: 'success' };
+    } else {
+      throw new Error('Action tidak dikenal: ' + action);
+    }
+    
+    return ContentService.createTextOutput(JSON.stringify({ status: 'success', data: responseData }))
+                         .setMimeType(ContentService.MimeType.JSON);
+  } catch (error) {
+    return ContentService.createTextOutput(JSON.stringify({ status: 'error', message: error.toString() }))
+                         .setMimeType(ContentService.MimeType.JSON);
+  }
+}
+
+function doGet(e) {
+  try {
+    const data = getAllCollections();
+    return ContentService.createTextOutput(JSON.stringify({ status: 'success', data: data }))
+                         .setMimeType(ContentService.MimeType.JSON);
+  } catch (error) {
+    return ContentService.createTextOutput(JSON.stringify({ status: 'error', message: error.toString() }))
+                         .setMimeType(ContentService.MimeType.JSON);
+  }
+}
+
+const COLLECTION_MAP = {
+  'teachers': {
+    sheetName: 'Data_Guru',
+    headers: ['NIP', 'Nama', 'Peran', 'Mapel', 'Status']
+  },
+  'students': {
+    sheetName: 'Data_Siswa',
+    headers: ['NIS', 'Nama', 'Kelas', 'Barcode']
+  },
+  'studentRecords': {
+    sheetName: 'Presensi_Siswa',
+    headers: ['ID', 'Nama', 'NIS', 'Kelas', 'Waktu', 'Status']
+  },
+  'teachingSessions': {
+    sheetName: 'KBM_Hari_Ini',
+    headers: ['ID', 'Nama', 'NIP', 'Mapel', 'Kelas', 'Jam', 'Status', 'Waktu_Mulai', 'Waktu_Selesai']
+  },
+  'izinRequests': {
+    sheetName: 'Pengajuan_Izin',
+    headers: ['ID', 'Nama', 'NIP', 'Tipe', 'Tanggal_Mulai', 'Tanggal_Selesai', 'Alasan', 'Status', 'Lampiran_Base64']
+  },
+  'teachingSchedule': {
+    sheetName: 'Jadwal_Mengajar',
+    headers: ['ID', 'Hari', 'Jam', 'Kelas', 'Mapel']
+  },
+  'attendanceRecords': {
+    sheetName: 'Presensi_Guru',
+    headers: ['ID', 'Tipe', 'Tanggal', 'Waktu', 'Warna', 'Bg', 'Glow', 'Nama_Ikon', 'NIP', 'Nama', 'Foto_Base64', 'Jarak_Lokasi', 'Status']
+  },
+  'holidays': {
+    sheetName: 'Kalender_Akademik',
+    headers: ['ID', 'Tanggal', 'Nama_Libur']
+  },
+  'piketSchedule': {
+    sheetName: 'Jadwal_Piket',
+    headers: ['ID', 'Hari', 'Daftar_NIP']
+  },
+  'classSubstitutions': {
+    sheetName: 'Substitusi_Kelas',
+    headers: ['ID', 'Tanggal', 'Kelas', 'Mapel', 'Jam', 'NIP_Absen', 'NIP_Substitusi', 'Tugas', 'Catatan', 'Status']
+  },
+  'systemSettings': {
+    sheetName: 'Pengaturan_Sistem',
+    headers: ['Kunci', 'Nilai']
+  }
+};
+
+function getOrCreateSheet(sheetName, headers) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName(sheetName);
+  if (!sheet) {
+    sheet = ss.insertSheet(sheetName);
+    sheet.appendRow(headers);
+    const headerRange = sheet.getRange(1, 1, 1, headers.length);
+    headerRange.setBackground('#0f172a')
+               .setFontColor('#ffffff')
+               .setFontWeight('bold')
+               .setHorizontalAlignment('center');
+    sheet.setFrozenRows(1);
+  }
+  return sheet;
+}
+
+function objectToRow(headers, data) {
+  const row = [];
+  headers.forEach(header => {
+    const reactKey = getReactKeyForHeader(header);
+    let val = data[reactKey];
+    if (val === undefined || val === null) {
+      val = '';
+    } else if (typeof val === 'object') {
+      val = JSON.stringify(val);
+    }
+    row.push(val);
+  });
+  return row;
+}
+
+function getReactKeyForHeader(header) {
+  const map = {
+    'NIP': 'nip', 'Nama': 'name', 'Peran': 'role', 'Mapel': 'mapel', 'Status': 'status',
+    'NIS': 'nis', 'Kelas': 'kelas', 'Barcode': 'barcode',
+    'ID': 'id', 'Waktu': 'time',
+    'Waktu_Mulai': 'timeStarted', 'Waktu_Selesai': 'timeEnded', 'Jam': 'jam',
+    'Tipe': 'type', 'Tanggal_Mulai': 'tanggalMulai', 'Tanggal_Selesai': 'tanggalSelesai', 'Alasan': 'alasan', 'Lampiran_Base64': 'attachment',
+    'Hari': 'day',
+    'Tanggal': 'date', 'Warna': 'color', 'Bg': 'bg', 'Glow': 'glow', 'Nama_Ikon': 'iconName', 'Foto_Base64': 'photo', 'Jarak_Lokasi': 'location',
+    'Nama_Libur': 'name',
+    'Daftar_NIP': 'teacherNips',
+    'NIP_Absen': 'absentTeacherNip', 'NIP_Substitusi': 'substituteTeacherNip', 'Tugas': 'task', 'Catatan': 'notes',
+    'Kunci': 'kunci', 'Nilai': 'nilai'
+  };
+  return map[header] || header.toLowerCase();
+}
+
+function rowToObject(headers, row) {
+  const obj = {};
+  headers.forEach((header, index) => {
+    const reactKey = getReactKeyForHeader(header);
+    let val = row[index];
+    if (val === undefined || val === null) {
+      val = '';
+    } else {
+      const valStr = String(val).trim();
+      if ((valStr.startsWith('{') && valStr.endsWith('}')) || (valStr.startsWith('[') && valStr.endsWith(']'))) {
+        try {
+          val = JSON.parse(valStr);
+        } catch (e) {
+          // keep as string
+        }
+      }
+    }
+    obj[reactKey] = val;
+  });
+  return obj;
+}
+
+function getAllCollections() {
+  const data = {};
+  Object.keys(COLLECTION_MAP).forEach(colKey => {
+    const colInfo = COLLECTION_MAP[colKey];
+    const sheet = getOrCreateSheet(colInfo.sheetName, colInfo.headers);
+    const rows = sheet.getDataRange().getValues();
+    const headers = rows[0];
+    const items = [];
+    for (let i = 1; i < rows.length; i++) {
+      items.push(rowToObject(headers, rows[i]));
+    }
+    data[colKey] = items;
+  });
+  return data;
+}
+
+function saveItem(collection, keyName, itemData) {
+  const colInfo = COLLECTION_MAP[collection];
+  if (!colInfo) return;
+  
+  const sheet = getOrCreateSheet(colInfo.sheetName, colInfo.headers);
+  const rows = sheet.getDataRange().getValues();
+  const headers = rows[0];
+  
+  const keyIndex = headers.indexOf(getKeyHeaderInIndonesian(keyName));
+  const rowData = objectToRow(headers, itemData);
+  
+  if (keyIndex >= 0 && rows.length > 1) {
+    const lookupVal = String(itemData[keyName]).trim();
+    for (let i = 1; i < rows.length; i++) {
+      if (String(rows[i][keyIndex]).trim() === lookupVal) {
+        sheet.getRange(i + 1, 1, 1, headers.length).setValues([rowData]);
+        return;
+      }
+    }
+  }
+  sheet.appendRow(rowData);
+}
+
+function getKeyHeaderInIndonesian(keyName) {
+  const map = {
+    'nip': 'NIP',
+    'nis': 'NIS',
+    'id': 'ID',
+    'kunci': 'Kunci'
+  };
+  return map[keyName] || keyName.toUpperCase();
+}
+
+function saveBatch(collection, batchData) {
+  const colInfo = COLLECTION_MAP[collection];
+  if (!colInfo) return;
+  
+  const sheet = getOrCreateSheet(colInfo.sheetName, colInfo.headers);
+  const lastRow = sheet.getLastRow();
+  if (lastRow > 1) {
+    sheet.deleteRows(2, lastRow - 1);
+  }
+  
+  if (batchData && batchData.length > 0) {
+    const headers = colInfo.headers;
+    const rowsToAppend = batchData.map(item => objectToRow(headers, item));
+    sheet.getRange(2, 1, rowsToAppend.length, headers.length).setValues(rowsToAppend);
+  }
+}
+
+function deleteItem(collection, keyName, idValue) {
+  const colInfo = COLLECTION_MAP[collection];
+  if (!colInfo) return;
+  
+  const sheet = getOrCreateSheet(colInfo.sheetName, colInfo.headers);
+  const rows = sheet.getDataRange().getValues();
+  const headers = rows[0];
+  
+  const keyIndex = headers.indexOf(getKeyHeaderInIndonesian(keyName));
+  if (keyIndex >= 0 && rows.length > 1) {
+    const lookupVal = String(idValue).trim();
+    for (let i = rows.length - 1; i >= 1; i--) {
+      if (String(rows[i][keyIndex]).trim() === lookupVal) {
+        sheet.deleteRow(i + 1);
+      }
+    }
+  }
+}
+
+function clearCollection(collection) {
+  const colInfo = COLLECTION_MAP[collection];
+  if (!colInfo) return;
+  
+  const sheet = getOrCreateSheet(colInfo.sheetName, colInfo.headers);
+  const lastRow = sheet.getLastRow();
+  if (lastRow > 1) {
+    sheet.deleteRows(2, lastRow - 1);
+  }
+}
+
+function saveSettings(settingsList) {
+  const colInfo = COLLECTION_MAP['systemSettings'];
+  const sheet = getOrCreateSheet(colInfo.sheetName, colInfo.headers);
+  
+  const lastRow = sheet.getLastRow();
+  if (lastRow > 1) {
+    sheet.deleteRows(2, lastRow - 1);
+  }
+  
+  if (settingsList && settingsList.length > 0) {
+    const rowsToAppend = settingsList.map(item => [item.kunci, item.nilai]);
+    sheet.getRange(2, 1, rowsToAppend.length, 2).setValues(rowsToAppend);
+  }
+}
+`;
 }
 

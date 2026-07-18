@@ -1,5 +1,5 @@
 import { initializeApp } from 'firebase/app';
-import { initializeFirestore } from 'firebase/firestore';
+import { initializeFirestore, memoryLocalCache } from 'firebase/firestore';
 
 const firebaseConfig = {
   apiKey: "AIzaSyAPtzUCG8u7dumadbctT92OMgN_TsO_5lI",
@@ -12,9 +12,12 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 
-// Initialize Firestore with experimentalAutoDetectLongPolling enabled to ensure connection stability in sandboxed environments
+// Initialize Firestore. We use memoryLocalCache() instead of persistentLocalCache()
+// to avoid IndexedDB corruption or permission blocks within the sandboxed iframe preview,
+// which cause the "Cannot read properties of undefined (reading 'approximateByteSize')" error.
 export const db = initializeFirestore(app, {
-  experimentalAutoDetectLongPolling: true
-}, "ai-studio-copyofabsensigur-e555e497-08a9-4618-b30f-e76dd5f2da65");
+  experimentalAutoDetectLongPolling: true,
+  localCache: memoryLocalCache()
+}, "absensi-db-v2");
 
 
