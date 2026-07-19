@@ -8,6 +8,10 @@
 
 // Mendapatkan URL Apps Script dari localStorage atau Pengaturan Sistem
 export function getAppsScriptUrl(): string {
+  // 1. Coba ambil dari Environment Variable (Sangat direkomendasikan untuk Vercel / Netlify)
+  const envUrl = import.meta.env.VITE_APPS_SCRIPT_URL;
+  if (envUrl) return envUrl;
+
   const localUrl = localStorage.getItem('appsScriptUrl');
   if (localUrl) return localUrl;
   
