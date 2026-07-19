@@ -117,12 +117,12 @@ export default function App() {
   const [newHolidayDate, setNewHolidayDate] = useState('');
   const [newHolidayName, setNewHolidayName] = useState('');
 
-  const [teachingSessionsToday, setTeachingSessionsToday] = useState<{id: string, name: string, nip: string, mapel: string, kelas: string, jam: string, status: string, timeStarted: string, timeEnded: string}[]>([]);
+  const [teachingSessionsToday, setTeachingSessionsToday] = useState<{id: string, name: string, nip: string, mapel: string, kelas: string, jam: string, status: string, timeStarted: string, timeEnded: string, photo?: string | null, photoLink?: string | null}[]>([]);
   const [teacherSearchQuery, setTeacherSearchQuery] = useState('');
   const [teacherStatusFilter, setTeacherStatusFilter] = useState<'semua' | 'hadir' | 'belum' | 'izin'>('semua');
   const [selectedPhotoUrl, setSelectedPhotoUrl] = useState<string | null>(null);
 
-  const [izinRequests, setIzinRequests] = useState<{id: string, name: string, nip: string, tipe: string, tanggalMulai: string, tanggalSelesai: string, alasan: string, status: string, attachment: string | null}[]>([]);
+  const [izinRequests, setIzinRequests] = useState<{id: string, name: string, nip: string, tipe: string, tanggalMulai: string, tanggalSelesai: string, alasan: string, status: string, attachment: string | null, attachmentDriveLink?: string | null}[]>([]);
 
   // Guru Piket & Substitusi Kelas
   const [piketSchedule, setPiketSchedule] = useState<{ id: string; day: string; teacherNips: string[] }[]>([]);
@@ -659,12 +659,12 @@ export default function App() {
         statusType = 'pulang';
         statusLabel = 'Sudah Pulang';
         recordTime = pulangRec.time;
-        photo = pulangRec.photo || null;
+        photo = pulangRec.photoDriveLink || pulangRec.photo || null;
       } else if (datangRec) {
         statusType = 'hadir';
         statusLabel = 'Hadir';
         recordTime = datangRec.time;
-        photo = datangRec.photo || null;
+        photo = datangRec.photoDriveLink || datangRec.photo || null;
         distance = datangRec.distance;
         
         const schedule = getScheduleForDate(datangRec.date, schoolSettings);
@@ -1617,8 +1617,8 @@ export default function App() {
           return;
         }
         
-        const targetLat = parseFloat(schoolSettings.latitude);
-        const targetLng = parseFloat(schoolSettings.longitude);
+        const targetLat = parseFloat(String(schoolSettings.latitude || '').replace(',', '.'));
+        const targetLng = parseFloat(String(schoolSettings.longitude || '').replace(',', '.'));
 
         if (isNaN(targetLat) || isNaN(targetLng)) {
           showNotification('Gagal: Koordinat sekolah tidak valid. Harap periksa Pengaturan Sistem.', 'text-rose-400');
@@ -1729,7 +1729,8 @@ export default function App() {
         status: 'Mengajar',
         timeStarted: formattedTime,
         timeEnded: '-',
-        date: formattedDate
+        date: formattedDate,
+        photo: photo || null
       };
       setTeachingSessionsToday(prev => [currentTeacherSession, ...prev]);
       saveTeachingSessionSync(currentTeacherSession);
@@ -4022,17 +4023,28 @@ export default function App() {
                               </div>
                             </div>
 
-                            <div className="flex sm:flex-col items-start sm:items-end justify-between sm:justify-center gap-1">
-                              <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-normal border ${
-                                session.status === 'Mengajar' ? 'bg-cyan-500/15 text-cyan-400 border-cyan-500/30' :
-                                session.status === 'Selesai' ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' :
-                                'bg-gray-500/15 text-gray-400 border-white/10'
-                              }`}>
-                                {session.status === 'Mengajar' && (
-                                  <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping" />
-                                )}
-                                {session.status}
-                              </span>
+                            <div className="flex items-center gap-2">
+                              {(session.photoLink || session.photo) && (
+                                <button
+                                  onClick={() => setSelectedPhotoUrl(session.photoLink || session.photo || null)}
+                                  className="p-1.5 bg-white/5 hover:bg-white/10 text-cyan-400 hover:text-cyan-300 rounded-lg transition-all border border-white/5 flex items-center justify-center"
+                                  title="Lihat Foto Mengajar"
+                                >
+                                  <Camera className="w-4 h-4" />
+                                </button>
+                              )}
+                              <div className="flex sm:flex-col items-start sm:items-end justify-between sm:justify-center gap-1">
+                                <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-normal border ${
+                                  session.status === 'Mengajar' ? 'bg-cyan-500/15 text-cyan-400 border-cyan-500/30' :
+                                  session.status === 'Selesai' ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' :
+                                  'bg-gray-500/15 text-gray-400 border-white/10'
+                                }`}>
+                                  {session.status === 'Mengajar' && (
+                                    <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping" />
+                                  )}
+                                  {session.status}
+                                </span>
+                              </div>
                             </div>
                           </div>
                         ))
@@ -4305,15 +4317,28 @@ export default function App() {
                             </div>
 
                             <div className="flex flex-wrap items-center justify-between gap-4 pt-4 border-t border-white/5">
-                              <div className="flex items-center gap-2">
-                                <span className="text-[10px] uppercase font-normal text-gray-500">Status:</span>
-                                <span className={`px-3 py-1 text-xs font-normal rounded-lg ${
-                                  req.status === 'Pending' ? 'bg-amber-500/10 text-amber-400 border border-amber-500/10' :
-                                  req.status === 'Disetujui' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/10' :
-                                  'bg-red-500/10 text-red-400 border border-red-500/10'
-                                } border`}>
-                                  {req.status}
-                                </span>
+                              <div className="flex items-center gap-3">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-[10px] uppercase font-normal text-gray-500">Status:</span>
+                                  <span className={`px-3 py-1 text-xs font-normal rounded-lg ${
+                                    req.status === 'Pending' ? 'bg-amber-500/10 text-amber-400 border border-amber-500/10' :
+                                    req.status === 'Disetujui' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/10' :
+                                    'bg-red-500/10 text-red-400 border border-red-500/10'
+                                  } border`}>
+                                    {req.status}
+                                  </span>
+                                </div>
+
+                                {(req.attachmentDriveLink || req.attachment) && (
+                                  <button
+                                    onClick={() => setSelectedPhotoUrl(req.attachmentDriveLink || req.attachment)}
+                                    className="inline-flex items-center gap-1.5 px-3 py-1 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 hover:text-indigo-300 text-xs font-normal rounded-lg border border-indigo-500/20 transition-all cursor-pointer"
+                                    title="Lihat Dokumen Surat Izin"
+                                  >
+                                    <FileText className="w-3.5 h-3.5" />
+                                    <span>Lihat Lampiran</span>
+                                  </button>
+                                )}
                               </div>
 
                               {req.status === 'Pending' && (
@@ -7874,11 +7899,11 @@ const COLLECTION_MAP = {
   },
   'teachingSessions': {
     sheetName: 'KBM_Hari_Ini',
-    headers: ['ID', 'Nama', 'NIP', 'Mapel', 'Kelas', 'Jam', 'Status', 'Waktu_Mulai', 'Waktu_Selesai']
+    headers: ['ID', 'Nama', 'NIP', 'Mapel', 'Kelas', 'Jam', 'Status', 'Waktu_Mulai', 'Waktu_Selesai', 'Foto_Base64', 'Link_Foto_Mengajar']
   },
   'izinRequests': {
     sheetName: 'Pengajuan_Izin',
-    headers: ['ID', 'Nama', 'NIP', 'Tipe', 'Tanggal_Mulai', 'Tanggal_Selesai', 'Alasan', 'Status', 'Lampiran_Base64']
+    headers: ['ID', 'Nama', 'NIP', 'Tipe', 'Tanggal_Mulai', 'Tanggal_Selesai', 'Alasan', 'Status', 'Lampiran_Base64', 'Link_Lampiran_Drive']
   },
   'teachingSchedule': {
     sheetName: 'Jadwal_Mengajar',
@@ -7886,7 +7911,7 @@ const COLLECTION_MAP = {
   },
   'attendanceRecords': {
     sheetName: 'Presensi_Guru',
-    headers: ['ID', 'Tipe', 'Tanggal', 'Waktu', 'Warna', 'Bg', 'Glow', 'Nama_Ikon', 'NIP', 'Nama', 'Foto_Base64', 'Jarak_Lokasi', 'Status']
+    headers: ['ID', 'Tipe', 'Tanggal', 'Waktu', 'Warna', 'Bg', 'Glow', 'Nama_Ikon', 'NIP', 'Nama', 'Foto_Base64', 'Link_Foto_Drive', 'Jarak_Lokasi', 'Status']
   },
   'holidays': {
     sheetName: 'Kalender_Akademik',
@@ -7918,8 +7943,59 @@ function getOrCreateSheet(sheetName, headers) {
                .setFontWeight('bold')
                .setHorizontalAlignment('center');
     sheet.setFrozenRows(1);
+  } else {
+    // Check and automatically append missing headers to preserve existing user databases
+    const existingHeaders = sheet.getRange(1, 1, 1, Math.max(sheet.getLastColumn(), 1)).getValues()[0];
+    const updatedHeaders = [...existingHeaders];
+    let changed = false;
+    headers.forEach(h => {
+      if (existingHeaders.indexOf(h) === -1) {
+        updatedHeaders.push(h);
+        changed = true;
+      }
+    });
+    if (changed) {
+      sheet.getRange(1, 1, 1, updatedHeaders.length).setValues([updatedHeaders]);
+      const headerRange = sheet.getRange(1, 1, 1, updatedHeaders.length);
+      headerRange.setBackground('#0f172a')
+                 .setFontColor('#ffffff')
+                 .setFontWeight('bold')
+                 .setHorizontalAlignment('center');
+    }
   }
   return sheet;
+}
+
+function uploadBase64ToDrive(base64Data, fileName, folderName) {
+  if (!base64Data || base64Data.indexOf('base64,') === -1) {
+    return '';
+  }
+  try {
+    let folder;
+    const folders = DriveApp.getFoldersByName(folderName);
+    if (folders.hasNext()) {
+      folder = folders.next();
+    } else {
+      folder = DriveApp.createFolder(folderName);
+    }
+    
+    const parts = base64Data.split('base64,');
+    const contentType = parts[0].split(':')[1].split(';')[0];
+    const decoded = Utilities.base64Decode(parts[1]);
+    const blob = Utilities.newBlob(decoded, contentType, fileName);
+    
+    const file = folder.createFile(blob);
+    
+    // Set file permission so anyone with the link can view it (important for direct rendering on client)
+    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    
+    // Generate a web-friendly direct link that can be rendered directly by browser img tags
+    const fileId = file.getId();
+    const directUrl = "https://drive.google.com/uc?export=download&id=" + fileId;
+    return directUrl;
+  } catch (err) {
+    return 'Error upload: ' + err.toString();
+  }
 }
 
 function objectToRow(headers, data) {
@@ -7927,12 +8003,18 @@ function objectToRow(headers, data) {
   headers.forEach(header => {
     const reactKey = getReactKeyForHeader(header);
     let val = data[reactKey];
+    if (reactKey === 'name' && (val === undefined || val === null || val === '')) {
+      val = data['nama'];
+    }
+    if (reactKey === 'nama' && (val === undefined || val === null || val === '')) {
+      val = data['name'];
+    }
     if (val === undefined || val === null) {
       val = '';
     } else if (typeof val === 'object') {
       val = JSON.stringify(val);
     }
-    row.push(val);
+    row.push("'" + String(val));
   });
   return row;
 }
@@ -7944,8 +8026,12 @@ function getReactKeyForHeader(header) {
     'ID': 'id', 'Waktu': 'time',
     'Waktu_Mulai': 'timeStarted', 'Waktu_Selesai': 'timeEnded', 'Jam': 'jam',
     'Tipe': 'type', 'Tanggal_Mulai': 'tanggalMulai', 'Tanggal_Selesai': 'tanggalSelesai', 'Alasan': 'alasan', 'Lampiran_Base64': 'attachment',
+    'Link_Lampiran_Drive': 'attachmentDriveLink',
     'Hari': 'day',
-    'Tanggal': 'date', 'Warna': 'color', 'Bg': 'bg', 'Glow': 'glow', 'Nama_Ikon': 'iconName', 'Foto_Base64': 'photo', 'Jarak_Lokasi': 'location',
+    'Tanggal': 'date', 'Warna': 'color', 'Bg': 'bg', 'Glow': 'glow', 'Nama_Ikon': 'iconName', 'Foto_Base64': 'photo',
+    'Link_Foto_Drive': 'photoDriveLink',
+    'Link_Foto_Mengajar': 'photoLink',
+    'Jarak_Lokasi': 'location',
     'Nama_Libur': 'name',
     'Daftar_NIP': 'teacherNips',
     'NIP_Absen': 'absentTeacherNip', 'NIP_Substitusi': 'substituteTeacherNip', 'Tugas': 'task', 'Catatan': 'notes',
@@ -7972,6 +8058,12 @@ function rowToObject(headers, row) {
       }
     }
     obj[reactKey] = val;
+    if (reactKey === 'name') {
+      obj['nama'] = val;
+    }
+    if (reactKey === 'nama') {
+      obj['name'] = val;
+    }
   });
   return obj;
 }
@@ -7995,6 +8087,31 @@ function getAllCollections() {
 function saveItem(collection, keyName, itemData) {
   const colInfo = COLLECTION_MAP[collection];
   if (!colInfo) return;
+
+  // -- AUTOMATIC GOOGLE DRIVE BASE64 IMAGE UPLOADER --
+  if (collection === 'attendanceRecords' && itemData.photo) {
+    if (String(itemData.photo).startsWith('data:image/')) {
+      const fileName = 'Selfie_' + (itemData.nip || '') + '_' + (itemData.nama || itemData.name || '').replace(/[^a-zA-Z0-9]/g, '_') + '_' + (itemData.date || '').replace(/[^a-zA-Z0-9]/g, '_') + '_' + (itemData.time || '').replace(/[^a-zA-Z0-9]/g, '-') + '.jpg';
+      const driveUrl = uploadBase64ToDrive(itemData.photo, fileName, 'Foto_Absensi_Sekolah');
+      itemData.photoDriveLink = driveUrl;
+    }
+  }
+  
+  if (collection === 'teachingSessions' && itemData.photo) {
+    if (String(itemData.photo).startsWith('data:image/')) {
+      const fileName = 'KBM_' + (itemData.nip || '') + '_' + (itemData.name || itemData.nama || '').replace(/[^a-zA-Z0-9]/g, '_') + '_' + (itemData.date || '').replace(/[^a-zA-Z0-9]/g, '_') + '_' + (itemData.timeStarted || '').replace(/[^a-zA-Z0-9]/g, '-') + '.jpg';
+      const driveUrl = uploadBase64ToDrive(itemData.photo, fileName, 'Foto_Absensi_KBM');
+      itemData.photoLink = driveUrl;
+    }
+  }
+  
+  if (collection === 'izinRequests' && itemData.attachment) {
+    if (String(itemData.attachment).startsWith('data:image/')) {
+      const fileName = 'Izin_' + (itemData.nip || '') + '_' + (itemData.name || itemData.nama || '').replace(/[^a-zA-Z0-9]/g, '_') + '_' + (itemData.tanggalMulai || '').replace(/[^a-zA-Z0-9]/g, '_') + '.jpg';
+      const driveUrl = uploadBase64ToDrive(itemData.attachment, fileName, 'Lampiran_Izin_Sekolah');
+      itemData.attachmentDriveLink = driveUrl;
+    }
+  }
   
   const sheet = getOrCreateSheet(colInfo.sheetName, colInfo.headers);
   const rows = sheet.getDataRange().getValues();
@@ -8007,12 +8124,16 @@ function saveItem(collection, keyName, itemData) {
     const lookupVal = String(itemData[keyName]).trim();
     for (let i = 1; i < rows.length; i++) {
       if (String(rows[i][keyIndex]).trim() === lookupVal) {
-        sheet.getRange(i + 1, 1, 1, headers.length).setValues([rowData]);
+        const range = sheet.getRange(i + 1, 1, 1, headers.length);
+        range.setNumberFormat("@");
+        range.setValues([rowData]);
         return;
       }
     }
   }
-  sheet.appendRow(rowData);
+  const appendRange = sheet.getRange(sheet.getLastRow() + 1, 1, 1, rowData.length);
+  appendRange.setNumberFormat("@");
+  appendRange.setValues([rowData]);
 }
 
 function getKeyHeaderInIndonesian(keyName) {
@@ -8038,7 +8159,9 @@ function saveBatch(collection, batchData) {
   if (batchData && batchData.length > 0) {
     const headers = colInfo.headers;
     const rowsToAppend = batchData.map(item => objectToRow(headers, item));
-    sheet.getRange(2, 1, rowsToAppend.length, headers.length).setValues(rowsToAppend);
+    const range = sheet.getRange(2, 1, rowsToAppend.length, headers.length);
+    range.setNumberFormat("@");
+    range.setValues(rowsToAppend);
   }
 }
 
@@ -8082,8 +8205,10 @@ function saveSettings(settingsList) {
   }
   
   if (settingsList && settingsList.length > 0) {
-    const rowsToAppend = settingsList.map(item => [item.kunci, item.nilai]);
-    sheet.getRange(2, 1, rowsToAppend.length, 2).setValues(rowsToAppend);
+    const rowsToAppend = settingsList.map(item => [item.kunci, "'" + String(item.nilai)]);
+    const range = sheet.getRange(2, 1, rowsToAppend.length, 2);
+    range.setNumberFormat("@");
+    range.setValues(rowsToAppend);
   }
 }
 `;

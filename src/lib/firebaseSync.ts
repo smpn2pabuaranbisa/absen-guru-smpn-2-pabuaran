@@ -405,6 +405,27 @@ export async function getSystemSettingsSync(defaultSettings: any): Promise<any> 
     if (!merged.appsScriptUrl) {
       merged.appsScriptUrl = 'https://script.google.com/macros/s/AKfycbyulNiQG-YcSXqe1SyaaQbfEg32BaNcdt7IaaNAY-DL2dZhhujnfjYMiYFy0Fwlc7M4sA/exec';
     }
+    
+    // Normalisasi koordinat, angka, dan boolean dari spreadsheet / cache lokal
+    if (merged.latitude !== undefined) {
+      merged.latitude = String(merged.latitude).trim().replace(',', '.');
+    }
+    if (merged.longitude !== undefined) {
+      merged.longitude = String(merged.longitude).trim().replace(',', '.');
+    }
+    if (merged.maxRadius !== undefined) {
+      merged.maxRadius = parseInt(String(merged.maxRadius).replace(',', '.')) || defaultSettings.maxRadius;
+    }
+    if (merged.lateTolerance !== undefined) {
+      merged.lateTolerance = parseInt(String(merged.lateTolerance).replace(',', '.')) || defaultSettings.lateTolerance;
+    }
+    if (merged.waGatewayEnabled !== undefined) {
+      merged.waGatewayEnabled = String(merged.waGatewayEnabled) === 'true';
+    }
+    if (merged.waAdminNotificationsEnabled !== undefined) {
+      merged.waAdminNotificationsEnabled = String(merged.waAdminNotificationsEnabled) === 'true';
+    }
+    
     return merged;
   }
   return defaultSettings;
@@ -421,10 +442,22 @@ export async function saveSystemSettingsSync(settings: any): Promise<void> {
   }
 
   // Format ke pasangan Kunci-Nilai untuk lembar bentang Google Sheets
-  const flatSettings = Object.keys(settings).map(key => ({
-    kunci: key,
-    nilai: typeof settings[key] === 'object' ? JSON.stringify(settings[key]) : String(settings[key])
-  }));
+  const flatSettings = Object.keys(settings).map(key => {
+    let val = settings[key];
+    if (typeof val === 'object') {
+      val = JSON.stringify(val);
+    } else {
+      val = String(val);
+      // Ganti koma dengan titik untuk latitude/longitude agar tersimpan dengan format standar
+      if (key === 'latitude' || key === 'longitude') {
+        val = val.trim().replace(',', '.');
+      }
+    }
+    return {
+      kunci: key,
+      nilai: val
+    };
+  });
 
   callAppsScript({
     action: 'saveSettings',
