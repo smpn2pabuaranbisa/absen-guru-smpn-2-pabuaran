@@ -1,7 +1,7 @@
 /**
  * MODULE SINKRONISASI GOOGLE SHEETS VIA GOOGLE APPS SCRIPT (GAS)
  * 
- * Sistem ini menggantikan Firebase Firestore dengan Google Sheets secara langsung.
+ * Sistem ini menggunakan Google Sheets secara langsung sebagai database utama.
  * Menyediakan sinkronisasi hibrida: local-first (menyimpan di localStorage secara instan)
  * dan cloud-sync (menyinkronkan ke Google Sheets di latar belakang secara asinkron).
  */
@@ -12,7 +12,14 @@ export function getAppsScriptUrl(): string {
   const envUrl = import.meta.env.VITE_APPS_SCRIPT_URL;
   if (envUrl) return envUrl;
 
-  const localUrl = localStorage.getItem('appsScriptUrl');
+  let localUrl = localStorage.getItem('appsScriptUrl');
+  if (localUrl && (
+    localUrl.includes('AKfycbyulNiQG-YcSXqe1SyaaQbfEg32BaNcdt7IaaNAY-DL2dZhhujnfjYMiYFy0Fwlc7M4sA') ||
+    localUrl.includes('AKfycbz3jk_at9mWRFJ2Vmu7uSbR8mhAPAoTTYQToWCn42PbX_XZ583zZDdLahc5eS_2_GK3')
+  )) {
+    localUrl = null;
+    localStorage.removeItem('appsScriptUrl');
+  }
   if (localUrl) return localUrl;
   
   try {
@@ -21,13 +28,21 @@ export function getAppsScriptUrl(): string {
       const settingsList = JSON.parse(settingsStr);
       const settings = settingsList[0] || settingsList;
       if (settings && settings.appsScriptUrl) {
-        return settings.appsScriptUrl;
+        if (
+          settings.appsScriptUrl.includes('AKfycbyulNiQG-YcSXqe1SyaaQbfEg32BaNcdt7IaaNAY-DL2dZhhujnfjYMiYFy0Fwlc7M4sA') ||
+          settings.appsScriptUrl.includes('AKfycbz3jk_at9mWRFJ2Vmu7uSbR8mhAPAoTTYQToWCn42PbX_XZ583zZDdLahc5eS_2_GK3')
+        ) {
+          settings.appsScriptUrl = 'https://script.google.com/macros/s/AKfycbyJDEN5WXWQli5I919-3mcN5GoCzO4DRDMcTyEQSIHwZa8MZiKe25wPTXuriRPVtYlJ/exec';
+          localStorage.setItem('absensi_systemSettings', JSON.stringify([settings]));
+        } else {
+          return settings.appsScriptUrl;
+        }
       }
     }
   } catch (e) {
     // ignore
   }
-  return 'https://script.google.com/macros/s/AKfycbyulNiQG-YcSXqe1SyaaQbfEg32BaNcdt7IaaNAY-DL2dZhhujnfjYMiYFy0Fwlc7M4sA/exec';
+  return 'https://script.google.com/macros/s/AKfycbyJDEN5WXWQli5I919-3mcN5GoCzO4DRDMcTyEQSIHwZa8MZiKe25wPTXuriRPVtYlJ/exec';
 }
 
 // Fungsi pembantu untuk memanggil API Google Apps Script secara asinkron
@@ -83,6 +98,18 @@ function saveLocalCache<T>(key: string, data: T): void {
 // Pencatat status apakah inisiasi sinkronisasi penuh sudah selesai
 let isInitialSyncDone = false;
 
+// Helper untuk menyinkronkan data dari awan secara aman (melindungi data lokal jika awan kosong)
+function safeSyncCollection(key: string, cloudItems: any[]): void {
+  if (!cloudItems) return;
+  const localItems = getLocalCache(key, []);
+  // Jika di awan ada data, ATAU jika di lokal belum ada data sama sekali, aman untuk memperbarui cache lokal
+  if (cloudItems.length > 0 || localItems.length === 0) {
+    saveLocalCache(key, cloudItems);
+  } else {
+    console.log(`Menjaga data lokal untuk [${key}] karena data awan kosong.`);
+  }
+}
+
 /**
  * Melakukan sinkronisasi penuh dengan Google Sheets di awal aplikasi dimuat.
  * Mengambil seluruh koleksi data sekaligus dalam satu request (SANGAT CEPAT!)
@@ -101,16 +128,18 @@ export async function initialSyncWithGoogleSheets(): Promise<boolean> {
     const result = await callAppsScript({ action: 'getAll' });
     if (result && result.status === 'success' && result.data) {
       const allData = result.data;
-      if (allData.teachers) saveLocalCache('teachers', allData.teachers);
-      if (allData.students) saveLocalCache('students', allData.students);
-      if (allData.studentRecords) saveLocalCache('studentRecords', allData.studentRecords);
-      if (allData.teachingSessions) saveLocalCache('teachingSessions', allData.teachingSessions);
-      if (allData.izinRequests) saveLocalCache('izinRequests', allData.izinRequests);
-      if (allData.teachingSchedule) saveLocalCache('teachingSchedule', allData.teachingSchedule);
-      if (allData.attendanceRecords) saveLocalCache('attendanceRecords', allData.attendanceRecords);
-      if (allData.holidays) saveLocalCache('holidays', allData.holidays);
-      if (allData.piketSchedule) saveLocalCache('piketSchedule', allData.piketSchedule);
-      if (allData.classSubstitutions) saveLocalCache('classSubstitutions', allData.classSubstitutions);
+      
+      // Sinkronisasikan setiap tabel secara aman
+      safeSyncCollection('teachers', allData.teachers);
+      safeSyncCollection('students', allData.students);
+      safeSyncCollection('studentRecords', allData.studentRecords);
+      safeSyncCollection('teachingSessions', allData.teachingSessions);
+      safeSyncCollection('izinRequests', allData.izinRequests);
+      safeSyncCollection('teachingSchedule', allData.teachingSchedule);
+      safeSyncCollection('attendanceRecords', allData.attendanceRecords);
+      safeSyncCollection('holidays', allData.holidays);
+      safeSyncCollection('piketSchedule', allData.piketSchedule);
+      safeSyncCollection('classSubstitutions', allData.classSubstitutions);
       
       if (allData.systemSettings) {
         // Gabungkan kembali pengaturan dari Google Sheets
@@ -123,7 +152,15 @@ export async function initialSyncWithGoogleSheets(): Promise<boolean> {
           }
         });
         if (Object.keys(settings).length > 0) {
-          saveLocalCache('systemSettings', [settings]);
+          const cachedList = getLocalCache('systemSettings', []);
+          const cachedSettings = cachedList[0] || cachedList;
+          if (!cachedSettings || Object.keys(cachedSettings).length === 0) {
+            saveLocalCache('systemSettings', [settings]);
+          } else {
+            // Gabungkan secara cerdas, dahulukan nilai dari Sheets yang aktif
+            const merged = { ...cachedSettings, ...settings };
+            saveLocalCache('systemSettings', [merged]);
+          }
         }
       }
       isInitialSyncDone = true;
@@ -134,6 +171,90 @@ export async function initialSyncWithGoogleSheets(): Promise<boolean> {
     console.warn('Gagal melakukan sinkronisasi awal penuh:', error);
   }
   return false;
+}
+
+/**
+ * Mengunggah semua data lokal yang ada di localStorage ke Google Sheets secara manual.
+ * Berguna saat pertama kali menghubungkan Google Sheets agar data lokal tidak hilang dan langsung terisi di lembar bentang.
+ */
+export async function uploadAllLocalDataToGoogleSheets(onProgress?: (msg: string) => void): Promise<boolean> {
+  const collections = [
+    { key: 'teachers', name: 'Daftar Guru' },
+    { key: 'students', name: 'Daftar Siswa' },
+    { key: 'studentRecords', name: 'Presensi Siswa' },
+    { key: 'teachingSessions', name: 'Sesi Mengajar KBM' },
+    { key: 'izinRequests', name: 'Pengajuan Izin' },
+    { key: 'teachingSchedule', name: 'Jadwal Mengajar' },
+    { key: 'attendanceRecords', name: 'Presensi Guru' },
+    { key: 'holidays', name: 'Kalender Akademik' },
+    { key: 'piketSchedule', name: 'Jadwal Guru Piket' },
+    { key: 'classSubstitutions', name: 'Substitusi Kelas' }
+  ];
+
+  try {
+    for (const col of collections) {
+      if (onProgress) {
+        onProgress(`Mengunggah data: ${col.name}...`);
+      }
+      const data = getLocalCache(col.key, []);
+      console.log(`Mengunggah batch untuk koleksi ${col.key}... (${data.length} item)`);
+      const res = await callAppsScript({
+        action: 'saveBatch',
+        collection: col.key,
+        data: data
+      });
+      if (!res || res.status !== 'success') {
+        console.warn(`Gagal mengunggah koleksi ${col.key}:`, res);
+        if (onProgress) {
+          onProgress(`Gagal mengunggah ${col.name}. Periksa koneksi Anda.`);
+        }
+        return false;
+      }
+    }
+    
+    // Juga unggah pengaturan sistem jika ada
+    if (onProgress) {
+      onProgress('Mengunggah Pengaturan Sistem...');
+    }
+    const cachedList = getLocalCache('systemSettings', []);
+    const cachedSettings = cachedList[0] || cachedList;
+    if (cachedSettings && Object.keys(cachedSettings).length > 0) {
+      const flatSettings = Object.keys(cachedSettings).map(key => {
+        let val = cachedSettings[key];
+        if (typeof val === 'object') {
+          val = JSON.stringify(val);
+        } else {
+          val = String(val);
+          if (key === 'latitude' || key === 'longitude') {
+            val = val.trim().replace(',', '.');
+          }
+        }
+        return {
+          kunci: key,
+          nilai: val
+        };
+      });
+      const res = await callAppsScript({
+        action: 'saveSettings',
+        data: flatSettings
+      });
+      if (!res || res.status !== 'success') {
+        console.warn(`Gagal mengunggah pengaturan sistem:`, res);
+        if (onProgress) {
+          onProgress('Gagal mengunggah Pengaturan Sistem.');
+        }
+        return false;
+      }
+    }
+    
+    return true;
+  } catch (error) {
+    console.error('Gagal mengunggah data lokal ke Google Sheets:', error);
+    if (onProgress) {
+      onProgress('Terjadi kesalahan saat mengunggah data.');
+    }
+    return false;
+  }
 }
 
 // 1. Sinkronisasi Data Guru
@@ -160,11 +281,22 @@ export async function saveTeacherSync(teacher: any): Promise<void> {
 }
 
 export async function saveTeachersSyncBatch(teachers: any[]): Promise<void> {
-  saveLocalCache('teachers', teachers);
+  const currentList = getLocalCache('teachers', []);
+  const mergedList = [...currentList];
+  teachers.forEach(t => {
+    const idx = mergedList.findIndex(existing => existing.nip === t.nip);
+    if (idx >= 0) {
+      mergedList[idx] = t;
+    } else {
+      mergedList.push(t);
+    }
+  });
+  saveLocalCache('teachers', mergedList);
+  
   callAppsScript({
     action: 'saveBatch',
     collection: 'teachers',
-    data: teachers
+    data: mergedList
   });
 }
 
@@ -205,11 +337,22 @@ export async function saveStudentSync(student: any): Promise<void> {
 }
 
 export async function saveStudentsSyncBatch(students: any[]): Promise<void> {
-  saveLocalCache('students', students);
+  const currentList = getLocalCache('students', []);
+  const mergedList = [...currentList];
+  students.forEach(s => {
+    const idx = mergedList.findIndex(existing => existing.nis === s.nis);
+    if (idx >= 0) {
+      mergedList[idx] = s;
+    } else {
+      mergedList.push(s);
+    }
+  });
+  saveLocalCache('students', mergedList);
+  
   callAppsScript({
     action: 'saveBatch',
     collection: 'students',
-    data: students
+    data: mergedList
   });
 }
 
@@ -406,8 +549,12 @@ export async function getSystemSettingsSync(defaultSettings: any): Promise<any> 
   const cachedSettings = cachedList[0] || cachedList;
   if (cachedSettings && Object.keys(cachedSettings).length > 0) {
     const merged = { ...defaultSettings, ...cachedSettings };
-    if (!merged.appsScriptUrl) {
-      merged.appsScriptUrl = 'https://script.google.com/macros/s/AKfycbyulNiQG-YcSXqe1SyaaQbfEg32BaNcdt7IaaNAY-DL2dZhhujnfjYMiYFy0Fwlc7M4sA/exec';
+    if (
+      !merged.appsScriptUrl ||
+      merged.appsScriptUrl.includes('AKfycbyulNiQG-YcSXqe1SyaaQbfEg32BaNcdt7IaaNAY-DL2dZhhujnfjYMiYFy0Fwlc7M4sA') ||
+      merged.appsScriptUrl.includes('AKfycbz3jk_at9mWRFJ2Vmu7uSbR8mhAPAoTTYQToWCn42PbX_XZ583zZDdLahc5eS_2_GK3')
+    ) {
+      merged.appsScriptUrl = 'https://script.google.com/macros/s/AKfycbyJDEN5WXWQli5I919-3mcN5GoCzO4DRDMcTyEQSIHwZa8MZiKe25wPTXuriRPVtYlJ/exec';
     }
     
     // Normalisasi koordinat, angka, dan boolean dari spreadsheet / cache lokal

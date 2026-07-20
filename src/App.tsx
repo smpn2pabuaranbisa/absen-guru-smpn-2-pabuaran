@@ -44,8 +44,9 @@ import {
   getClassSubstitutionsSync,
   saveClassSubstitutionSync,
   deleteClassSubstitutionSync,
-  initialSyncWithGoogleSheets
-} from './lib/firebaseSync';
+  initialSyncWithGoogleSheets,
+  uploadAllLocalDataToGoogleSheets
+} from './lib/sheetsSync';
 
 type AttendanceRecord = {
   id: string;
@@ -151,6 +152,8 @@ export default function App() {
   const [confirmDeleteSessions, setConfirmDeleteSessions] = useState(false);
   const [confirmDeleteStudentRecords, setConfirmDeleteStudentRecords] = useState(false);
   const [confirmDeleteIzinRequests, setConfirmDeleteIzinRequests] = useState(false);
+  const [confirmDeleteAllTeachers, setConfirmDeleteAllTeachers] = useState(false);
+  const [confirmDeleteAllStudents, setConfirmDeleteAllStudents] = useState(false);
   const [confirmResetAll, setConfirmResetAll] = useState(false);
 
   const handleClearTeacherRecords = async () => {
@@ -197,6 +200,28 @@ export default function App() {
     }
   };
 
+  const handleClearAllTeachers = async () => {
+    try {
+      await clearCollectionSync('teachers');
+      setTeachers([]);
+      showNotification('Semua data direktori guru berhasil dihapus!', 'text-emerald-400');
+      setConfirmDeleteAllTeachers(false);
+    } catch (e) {
+      showNotification('Gagal menghapus data direktori guru.', 'text-rose-400');
+    }
+  };
+
+  const handleClearAllStudents = async () => {
+    try {
+      await clearCollectionSync('students');
+      setStudents([]);
+      showNotification('Semua data direktori siswa berhasil dihapus!', 'text-emerald-400');
+      setConfirmDeleteAllStudents(false);
+    } catch (e) {
+      showNotification('Gagal menghapus data direktori siswa.', 'text-rose-400');
+    }
+  };
+
   const handleResetAllActivity = async () => {
     try {
       await Promise.all([
@@ -221,7 +246,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<string>('dashboard');
   const [isLoading, setIsLoading] = useState(true);
   const [schoolSettings, setSchoolSettings] = useState({
-    appsScriptUrl: "https://script.google.com/macros/s/AKfycbyulNiQG-YcSXqe1SyaaQbfEg32BaNcdt7IaaNAY-DL2dZhhujnfjYMiYFy0Fwlc7M4sA/exec",
+    appsScriptUrl: "https://script.google.com/macros/s/AKfycbyJDEN5WXWQli5I919-3mcN5GoCzO4DRDMcTyEQSIHwZa8MZiKe25wPTXuriRPVtYlJ/exec",
     schoolName: "SMPN 2 Pabuaran",
     academicYear: "2026/2027",
     headmasterName: "Drs. H. Ahmad Sunarya, M.Pd",
@@ -5187,7 +5212,7 @@ export default function App() {
 
                     <div className="space-y-6">
                       <div className="p-4 bg-[#05050A] border border-white/5 rounded-2xl space-y-4">
-                        <div className="flex flex-col md:flex-row md:items-center justify-between gap-2 border-b border-white/5 pb-3">
+                        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-white/5 pb-3">
                           <div>
                             <span className="text-xs text-gray-400">Status Sinkronisasi</span>
                             <div className="flex items-center gap-2 mt-0.5">
@@ -5205,28 +5230,59 @@ export default function App() {
                             </div>
                           </div>
                           
-                          <button
-                            type="button"
-                            onClick={async () => {
-                              if (!schoolSettings.appsScriptUrl) {
-                                showNotification('Harap masukkan URL Google Apps Script terlebih dahulu!', 'text-amber-400');
-                                return;
-                              }
-                              showNotification('Sedang mensinkronisasikan seluruh data...', 'text-white');
-                              localStorage.setItem('appsScriptUrl', schoolSettings.appsScriptUrl);
-                              const ok = await initialSyncWithGoogleSheets();
-                              if (ok) {
-                                showNotification('Sinkronisasi penuh Google Sheets BERHASIL! Me-refresh halaman...', 'text-emerald-400');
-                                setTimeout(() => window.location.reload(), 1500);
-                              } else {
-                                showNotification('Gagal terhubung ke Google Apps Script. Periksa kembali URL Anda.', 'text-rose-400');
-                              }
-                            }}
-                            className="px-4 py-2 bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 border border-blue-500/20 rounded-xl text-xs font-medium cursor-pointer transition-all flex items-center gap-2 self-start md:self-auto"
-                          >
-                            <Download className="w-3.5 h-3.5" />
-                            Tes Koneksi & Ambil Data Cloud
-                          </button>
+                          <div className="flex flex-col sm:flex-row gap-2 self-start md:self-auto w-full md:w-auto">
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                if (!schoolSettings.appsScriptUrl) {
+                                  showNotification('Harap masukkan URL Google Apps Script terlebih dahulu!', 'text-amber-400');
+                                  return;
+                                }
+                                showNotification('Sedang mensinkronisasikan seluruh data...', 'text-white');
+                                localStorage.setItem('appsScriptUrl', schoolSettings.appsScriptUrl);
+                                const ok = await initialSyncWithGoogleSheets();
+                                if (ok) {
+                                  showNotification('Sinkronisasi penuh Google Sheets BERHASIL! Me-refresh halaman...', 'text-emerald-400');
+                                  setTimeout(() => window.location.reload(), 1500);
+                                } else {
+                                  showNotification('Gagal terhubung ke Google Apps Script. Periksa kembali URL Anda.', 'text-rose-400');
+                                }
+                              }}
+                              className="px-4 py-2 bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 border border-blue-500/20 rounded-xl text-xs font-medium cursor-pointer transition-all flex items-center justify-center gap-2"
+                              title="Ambil data dari Google Sheets untuk mengganti data di aplikasi ini"
+                            >
+                              <Download className="w-3.5 h-3.5" />
+                              Ambil Data Cloud
+                            </button>
+                            
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                if (!schoolSettings.appsScriptUrl) {
+                                  showNotification('Harap masukkan URL Google Apps Script terlebih dahulu!', 'text-amber-400');
+                                  return;
+                                }
+                                if (!window.confirm('Tindakan ini akan mengunggah seluruh data lokal (Guru, Siswa, Riwayat Absensi, dll.) ke Google Sheets Anda dan akan menimpa data di sana. Lanjutkan?')) {
+                                  return;
+                                }
+                                showNotification('Sedang menyiapkan unggahan data ke Google Sheets...', 'text-white');
+                                localStorage.setItem('appsScriptUrl', schoolSettings.appsScriptUrl);
+                                const ok = await uploadAllLocalDataToGoogleSheets((msg) => {
+                                  showNotification(msg, 'text-blue-400');
+                                });
+                                if (ok) {
+                                  showNotification('Unggah seluruh data ke Google Sheets BERHASIL!', 'text-emerald-400');
+                                } else {
+                                  showNotification('Gagal mengunggah data ke Google Sheets. Periksa koneksi atau URL Apps Script Anda.', 'text-rose-400');
+                                }
+                              }}
+                              className="px-4 py-2 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 rounded-xl text-xs font-medium cursor-pointer transition-all flex items-center justify-center gap-2"
+                              title="Unggah semua data yang ada di aplikasi ini ke Google Sheets Anda"
+                            >
+                              <Upload className="w-3.5 h-3.5" />
+                              Unggah Data Lokal ke Cloud
+                            </button>
+                          </div>
                         </div>
 
                         <div className="space-y-2">
@@ -5463,7 +5519,83 @@ export default function App() {
                         </div>
                       </div>
 
-                      {/* Section 5: Reset Total (Full-width inside section) */}
+                      {/* Section 5: Data Master Direktori Guru */}
+                      <div className="p-5 rounded-2xl bg-white/[0.01] border border-white/5 flex flex-col justify-between">
+                        <div>
+                          <h4 className="text-sm font-medium text-white flex items-center gap-2">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                            Direktori Master Guru
+                          </h4>
+                          <p className="text-xs text-gray-400 mt-2 leading-relaxed">
+                            Menghapus seluruh daftar identitas guru dan staff yang terdaftar pada direktori master aplikasi dan spreadsheet Google Sheets.
+                          </p>
+                        </div>
+                        <div className="mt-5">
+                          {confirmDeleteAllTeachers ? (
+                            <div className="flex items-center gap-2 w-full">
+                              <button 
+                                onClick={handleClearAllTeachers}
+                                className="flex-1 py-2.5 bg-rose-600 hover:bg-rose-500 text-white text-xs font-medium rounded-xl transition-all cursor-pointer active:scale-95"
+                              >
+                                Ya, Hapus Semua Guru
+                              </button>
+                              <button 
+                                onClick={() => setConfirmDeleteAllTeachers(false)}
+                                className="px-4 py-2.5 bg-white/5 hover:bg-white/10 text-gray-300 text-xs font-medium rounded-xl transition-all cursor-pointer"
+                              >
+                                Batal
+                              </button>
+                            </div>
+                          ) : (
+                            <button 
+                              onClick={() => setConfirmDeleteAllTeachers(true)}
+                              className="w-full py-2.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 text-xs font-medium rounded-xl transition-all cursor-pointer"
+                            >
+                              Hapus Semua Data Guru
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Section 6: Data Master Direktori Siswa */}
+                      <div className="p-5 rounded-2xl bg-white/[0.01] border border-white/5 flex flex-col justify-between">
+                        <div>
+                          <h4 className="text-sm font-medium text-white flex items-center gap-2">
+                            <span className="w-1.5 h-1.5 rounded-full bg-teal-400" />
+                            Direktori Master Siswa
+                          </h4>
+                          <p className="text-xs text-gray-400 mt-2 leading-relaxed">
+                            Menghapus seluruh daftar identitas siswa yang terdaftar pada direktori master aplikasi dan spreadsheet Google Sheets.
+                          </p>
+                        </div>
+                        <div className="mt-5">
+                          {confirmDeleteAllStudents ? (
+                            <div className="flex items-center gap-2 w-full">
+                              <button 
+                                onClick={handleClearAllStudents}
+                                className="flex-1 py-2.5 bg-rose-600 hover:bg-rose-500 text-white text-xs font-medium rounded-xl transition-all cursor-pointer active:scale-95"
+                              >
+                                Ya, Hapus Semua Siswa
+                              </button>
+                              <button 
+                                onClick={() => setConfirmDeleteAllStudents(false)}
+                                className="px-4 py-2.5 bg-white/5 hover:bg-white/10 text-gray-300 text-xs font-medium rounded-xl transition-all cursor-pointer"
+                              >
+                                Batal
+                              </button>
+                            </div>
+                          ) : (
+                            <button 
+                              onClick={() => setConfirmDeleteAllStudents(true)}
+                              className="w-full py-2.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 text-xs font-medium rounded-xl transition-all cursor-pointer"
+                            >
+                              Hapus Semua Data Siswa
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Section 7: Reset Total (Full-width inside section) */}
                       <div className="md:col-span-2 p-6 rounded-2xl bg-rose-500/[0.02] border border-rose-500/10">
                         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                           <div>
@@ -8153,12 +8285,17 @@ function saveBatch(collection, batchData) {
   const sheet = getOrCreateSheet(colInfo.sheetName, colInfo.headers);
   const lastRow = sheet.getLastRow();
   if (lastRow > 1) {
-    sheet.deleteRows(2, lastRow - 1);
+    sheet.getRange(2, 1, lastRow - 1, colInfo.headers.length).clearContent();
   }
   
   if (batchData && batchData.length > 0) {
     const headers = colInfo.headers;
     const rowsToAppend = batchData.map(item => objectToRow(headers, item));
+    const currentMaxRows = sheet.getMaxRows();
+    const neededRows = rowsToAppend.length + 1;
+    if (currentMaxRows < neededRows) {
+      sheet.insertRowsAfter(currentMaxRows, neededRows - currentMaxRows);
+    }
     const range = sheet.getRange(2, 1, rowsToAppend.length, headers.length);
     range.setNumberFormat("@");
     range.setValues(rowsToAppend);
@@ -8191,7 +8328,7 @@ function clearCollection(collection) {
   const sheet = getOrCreateSheet(colInfo.sheetName, colInfo.headers);
   const lastRow = sheet.getLastRow();
   if (lastRow > 1) {
-    sheet.deleteRows(2, lastRow - 1);
+    sheet.getRange(2, 1, lastRow - 1, colInfo.headers.length).clearContent();
   }
 }
 
@@ -8201,11 +8338,16 @@ function saveSettings(settingsList) {
   
   const lastRow = sheet.getLastRow();
   if (lastRow > 1) {
-    sheet.deleteRows(2, lastRow - 1);
+    sheet.getRange(2, 1, lastRow - 1, 2).clearContent();
   }
   
   if (settingsList && settingsList.length > 0) {
     const rowsToAppend = settingsList.map(item => [item.kunci, "'" + String(item.nilai)]);
+    const currentMaxRows = sheet.getMaxRows();
+    const neededRows = rowsToAppend.length + 1;
+    if (currentMaxRows < neededRows) {
+      sheet.insertRowsAfter(currentMaxRows, neededRows - currentMaxRows);
+    }
     const range = sheet.getRange(2, 1, rowsToAppend.length, 2);
     range.setNumberFormat("@");
     range.setValues(rowsToAppend);
